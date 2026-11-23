@@ -1,15 +1,15 @@
 """
-LEHA Vortex Workspace Suite (v1.2.1)
-Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
+LEHA Vortex Workspace Suite (v1.5.8)
+Windows 10/11 workspace and window management engine.
 
-Architecture:
-- Pure Win32 Layered AppBar (120FPS GDI+ DIBSection, zero-flicker, zero-Tkinter-frame artifacts)
-- Strict 64-bit Win32 ctypes bindings (HMONITOR, HDC, HGDIOBJ, HWND)
-- Independent Per-Monitor Magnetic FancyZones (F1..F6 / Alt+1..6, 2-to-4 zone merge, sticky-edge resize)
-- WindowTop Pro (DWM Always-On-Top border with Virtual Desktop cloak detection, live opacity,
-  ghost click-through)
-- Context-Aware Quick Shell (F9 / F10)
-- macOS/iOS Retina Studio UI (Bilingual EN/VI, Dark/Light)
+Components:
+- Pure Win32 layered AppBar (GDI DIBSection rendering, no Tk frames)
+- Strict 64-bit ctypes bindings for all Win32/COM calls
+- Per-monitor, per-virtual-desktop snap layouts (F1..F6 / Alt+1..6,
+  zone merging, coupled edge resize, window position restore)
+- WindowTop Pro: always-on-top DWM border, live opacity, ghost mode
+- Quick Shell: PowerShell at the active Explorer path (F9 / F10)
+- Vortex Studio: local web UI for configuration (EN/VI, dark/light)
 
 License: MIT License - Copyright (c) 2026 Le Ha
 Author: Le Ha
@@ -58,16 +58,15 @@ try:
 except Exception:
     pass
 
-# --- Virtual desktop layer (v1.2.0): the old library for virtual desktops
-# was removed entirely (it was a suspect in the 0xc0000409 crashes on
-# Windows 11 24H2, where Microsoft changed the internal desktop COM
-# interfaces; the crashes continued without it, so the hunt goes on via
-# crash dumps). Only stable surfaces are used now: the Explorer registry
-# store for reads and renames, the documented IVirtualDesktopManager for
-# per-window desktop ids, and the native Win+Ctrl+Arrow shortcut to switch.
-# Note (v1.2.1): on Windows 11 24H2 the VirtualDesktopManager coclass is
-# not registered for direct activation, so _get_vdm obtains the manager
-# through the ImmersiveShell service provider instead.
+# --- Virtual desktop layer -------------------------------------------
+# Only stable, supported surfaces are used: the Explorer registry store
+# for enumeration and renaming, the documented IVirtualDesktopManager
+# for per-window desktop ids, and IVirtualDesktopManagerInternal's
+# SwitchDesktop for direct jumps (the Win+Ctrl+Arrow key simulation is
+# kept only as a fallback -- it steps through every desktop in
+# between). On Windows 11 24H2 the VirtualDesktopManager coclass is
+# not registered for direct activation, so _get_vdm obtains the
+# manager through the ImmersiveShell service provider instead.
 _VD_REG = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
 
 
@@ -77,11 +76,10 @@ def _vd_guid_list() -> List[str]:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _VD_REG) as key:
             raw = None
             # Windows 11 24H2 stores the list under "VirtualDesktopIDs";
-            # older builds used "VirtualDesktops". Try both, in that order.
-            # (Reading the wrong name silently fell back to enumerating the
-            # Desktops subkeys, which keep orphaned entries for long-deleted
-            # desktops: 6 pills for 4 real desktops, confirmed on the user's
-            # machine 22/11/2026.)
+            # older builds used "VirtualDesktops". Try both, in that
+            # order -- reading the wrong name falls back to enumerating
+            # the Desktops subkeys, which keep orphaned entries for
+            # long-deleted desktops.
             for value_name in ("VirtualDesktopIDs", "VirtualDesktops"):
                 try:
                     raw, _ = winreg.QueryValueEx(key, value_name)
@@ -150,12 +148,10 @@ def _get_vdm() -> Any:
        works on Windows 10 / early Windows 11.
     2. ImmersiveShell service provider -> QueryService with the service id
        set to the IVirtualDesktopManager IID -- required on Windows 11
-       24H2, where the coclass is not registered at all (both registry
-       hives checked empty; direct activation returns 0x80040154 "Class
-       not registered"). Confirmed working on the user's machine
-       23/11/2026: counts came back {1: 2, 2: 3, 3: 1, 4: 1}.
-    If both routes fail, the reason is written to vortex_error.log once --
-    the per-desktop window counts must never die silently again.
+       24H2, where the coclass is not registered at all (direct
+       activation returns 0x80040154, "Class not registered").
+    If both routes fail, the reason is logged to vortex_error.log once
+    and the caller degrades gracefully instead of retrying.
     """
     global _vdm_instance, _vdm_failed
     if _vdm_instance is not None or _vdm_failed:
@@ -207,6 +203,164 @@ def _get_vdm() -> Any:
         _vdm_failed = True
         _log_error("vdm-init", exc)
     return _vdm_instance
+
+
+_vdi_bundle: Any = None
+_vdi_failed = False
+
+
+def _get_vd_internal() -> Any:
+    """(manager, IObjectArray, IVirtualDesktop) for the undocumented
+    IVirtualDesktopManagerInternal, or None (lazy, fail-soft, logged once).
+
+    Obtained through the same ImmersiveShell QueryService door as
+    _get_vdm, with service id {C5E0CDCA-7B6E-41B2-9FC4-D93975CC467B}.
+    The interface IID is build-specific -- {53F5CA0B-...} on Windows 11
+    24H2 (build 26100+), {A3175F2D-...} on 23H2 (22621-26099) -- both are
+    tried, in that order. SwitchDesktop jumps straight to the target
+    desktop, while the Win+Ctrl+Arrow simulation steps through every
+    desktop in between. Main thread only (COM apartment).
+    """
+    global _vdi_bundle, _vdi_failed
+    if _vdi_bundle is not None or _vdi_failed:
+        return _vdi_bundle
+    try:
+        import comtypes
+        from comtypes import COMMETHOD, GUID, IUnknown
+        try:
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+
+        class IServiceProvider(IUnknown):
+            _iid_ = GUID("{6D5140C1-7436-11CE-8034-00AA006009FA}")
+            _methods_ = [
+                COMMETHOD([], ctypes.c_long, "QueryService",
+                          (["in"], ctypes.POINTER(GUID), "guid_service"),
+                          (["in"], ctypes.POINTER(GUID), "riid"),
+                          (["out"], ctypes.POINTER(ctypes.c_void_p), "ppv_object")),
+            ]
+
+        class IVirtualDesktop(IUnknown):
+            _iid_ = GUID("{3F07F4BE-B107-441A-AF0F-39D82529072C}")
+            _methods_ = [
+                COMMETHOD([], ctypes.c_long, "IsViewVisible",
+                          (["in"], ctypes.c_void_p, "view"),
+                          (["out"], ctypes.POINTER(ctypes.c_int), "visible")),
+                COMMETHOD([], ctypes.c_long, "GetId",
+                          (["out"], ctypes.POINTER(GUID), "pId")),
+                COMMETHOD([], ctypes.c_long, "GetName",
+                          (["out"], ctypes.POINTER(ctypes.c_void_p), "pName")),
+                COMMETHOD([], ctypes.c_long, "GetWallpaperPath",
+                          (["out"], ctypes.POINTER(ctypes.c_void_p), "pPath")),
+                COMMETHOD([], ctypes.c_long, "IsRemote",
+                          (["out"], ctypes.POINTER(ctypes.c_int), "pRemote")),
+            ]
+
+        class IObjectArray(IUnknown):
+            _iid_ = GUID("{92CA9DCD-5622-4BBA-A805-5E9F541BD8C9}")
+            _methods_ = [
+                COMMETHOD([], ctypes.c_long, "GetCount",
+                          (["out"], ctypes.POINTER(ctypes.c_uint), "pcObjects")),
+                COMMETHOD([], ctypes.c_long, "GetAt",
+                          (["in"], ctypes.c_uint, "uiIndex"),
+                          (["in"], ctypes.POINTER(GUID), "riid"),
+                          (["out"], ctypes.POINTER(ctypes.c_void_p), "ppvObject")),
+            ]
+
+        def _make_internal_class(iid_text: str) -> Any:
+            class IVirtualDesktopManagerInternal(IUnknown):
+                _iid_ = GUID(iid_text)
+                _methods_ = [
+                    COMMETHOD([], ctypes.c_long, "GetCount",
+                              (["out"], ctypes.POINTER(ctypes.c_uint), "pCount")),
+                    COMMETHOD([], ctypes.c_long, "MoveViewToDesktop",
+                              (["in"], ctypes.c_void_p, "pView"),
+                              (["in"], ctypes.c_void_p, "pDesktop")),
+                    COMMETHOD([], ctypes.c_long, "CanViewMoveDesktops",
+                              (["in"], ctypes.c_void_p, "pView"),
+                              (["out"], ctypes.POINTER(ctypes.c_int), "pfCan")),
+                    COMMETHOD([], ctypes.c_long, "GetCurrentDesktop",
+                              (["out"], ctypes.POINTER(ctypes.c_void_p), "ppDesktop")),
+                    COMMETHOD([], ctypes.c_long, "GetDesktops",
+                              (["out"], ctypes.POINTER(ctypes.c_void_p), "ppDesktops")),
+                    COMMETHOD([], ctypes.c_long, "GetAdjacentDesktop",
+                              (["in"], ctypes.c_void_p, "pReference"),
+                              (["in"], ctypes.c_int, "uDirection"),
+                              (["out"], ctypes.POINTER(ctypes.c_void_p), "ppDesktop")),
+                    COMMETHOD([], ctypes.c_long, "SwitchDesktop",
+                              (["in"], ctypes.c_void_p, "pDesktop")),
+                ]
+
+            return IVirtualDesktopManagerInternal
+
+        shell = comtypes.CoCreateInstance(
+            GUID("{C2F03A33-21F5-47FA-B4BB-156362A2F239}"), IServiceProvider, comtypes.CLSCTX_ALL)
+        mgr = None
+        last_exc: Optional[BaseException] = None
+        for iid_text in ("{53F5CA0B-158F-4124-900C-057158060B27}",
+                         "{A3175F2D-239C-4BD2-8AA0-EEBA8B0B138E}"):
+            try:
+                cls = _make_internal_class(iid_text)
+                # comtypes convention: the trailing [out] pointer is
+                # returned by the call, not passed to it.
+                ppv = shell.QueryService(GUID("{C5E0CDCA-7B6E-41B2-9FC4-D93975CC467B}"),
+                                         GUID(iid_text))
+                addr = ppv.value if hasattr(ppv, "value") else int(ppv)
+                if not addr:
+                    raise RuntimeError("ImmersiveShell QueryService returned a null pointer")
+                unk = ctypes.cast(addr, comtypes.POINTER(IUnknown))
+                mgr = unk.QueryInterface(cls)
+                break
+            except Exception as exc:
+                last_exc = exc
+        if mgr is None:
+            raise RuntimeError(f"no IVirtualDesktopManagerInternal IID worked: {last_exc}")
+        _vdi_bundle = (mgr, IObjectArray, IVirtualDesktop)
+    except Exception as exc:
+        _vdi_failed = True
+        _log_error("vd-internal-init", exc)
+    return _vdi_bundle
+
+
+def _switch_desktop_direct(target_num: int) -> bool:
+    """Jump straight to desktop `target_num` (1-based) via
+    IVirtualDesktopManagerInternal.SwitchDesktop. Returns False -- the
+    caller then falls back to the Win+Ctrl+Arrow simulation -- if the
+    internal route is unavailable, the index is out of range, or the
+    desktop sitting at that index is not the one the registry lists
+    there (never jump blind). Main thread only."""
+    try:
+        import comtypes
+        from comtypes import GUID, IUnknown
+
+        bundle = _get_vd_internal()
+        if bundle is None:
+            return False
+        mgr, i_object_array, i_virtual_desktop = bundle
+        ppv = mgr.GetDesktops()
+        addr = ppv.value if hasattr(ppv, "value") else int(ppv)
+        if not addr:
+            return False
+        arr = ctypes.cast(addr, comtypes.POINTER(IUnknown)).QueryInterface(i_object_array)
+        if not (1 <= target_num <= int(arr.GetCount())):
+            return False
+        ppv2 = arr.GetAt(target_num - 1, GUID("{3F07F4BE-B107-441A-AF0F-39D82529072C}"))
+        desk_addr = ppv2.value if hasattr(ppv2, "value") else int(ppv2)
+        if not desk_addr:
+            return False
+        desk = ctypes.cast(desk_addr, comtypes.POINTER(IUnknown)).QueryInterface(i_virtual_desktop)
+        guids = _vd_guid_list()
+        if 1 <= target_num <= len(guids):
+            desk_guid = str(desk.GetId()).strip("{}").lower()
+            if desk_guid != guids[target_num - 1]:
+                return False
+        mgr.SwitchDesktop(ctypes.cast(desk, ctypes.c_void_p))
+        return True
+    except Exception as exc:
+        _log_error("vd-switch-direct", exc)
+        return False
+
 
 # --- Crash/error diagnostics: pythonw has no console, so failures are written
 # to vortex_error.log next to this file instead of vanishing silently.
@@ -270,7 +424,16 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.1"
+APP_VERSION = "v1.5.8"
+
+# Threading rule (hard): never call into Tk from a ctypes callback or
+# a worker thread. _tkinter keeps a single saved thread-state slot for
+# its callbacks; entering Tk from inside Tcl's own dispatch (e.g. from
+# the AppBar WNDPROC) overwrites that slot, and a later callback then
+# restores a NULL thread state -- CPython aborts with a fatal error
+# and no Python traceback (0xc0000409, FAST_FAIL_FATAL_APP_EXIT).
+# Foreign callbacks therefore only enqueue work via _post_ui; the
+# main thread executes it.
 APP_AUTHOR = "by Le Ha"
 APP_LICENSE = "MIT License - Copyright (c) 2026 Le Ha"
 REG_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -343,6 +506,7 @@ class TRACKMOUSEEVENT(ctypes.Structure):
 
 
 WNDPROC_TYPE = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+WINEVENTPROC_TYPE = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, wintypes.DWORD, wintypes.HWND, ctypes.c_long, ctypes.c_long, wintypes.DWORD, wintypes.DWORD)
 
 
 class WNDCLASSEXW(ctypes.Structure):
@@ -392,12 +556,13 @@ user32.DestroyMenu.argtypes = [wintypes.HMENU]
 user32.DestroyMenu.restype = wintypes.BOOL
 shell32.SHAppBarMessage.argtypes = [wintypes.DWORD, ctypes.POINTER(APPBARDATA)]
 shell32.SHAppBarMessage.restype = ctypes.c_size_t
-# --- 64-bit signature completion (v1.1.5): the calls below previously ran
-# with ctypes' default restype (C int), which truncates 64-bit handles and
-# pointers. Most critically GetModuleHandleW: its truncated value was stored
-# as the hInstance of the AppBar window class, so RegisterClassExW and
-# CreateWindowExW intermittently died with an access violation at startup
-# (evidence: vortex_error.log, 22/11/2026).
+# --- 64-bit signature completion --------------------------------------
+# The calls below previously ran with ctypes' default restype (C int),
+# which truncates 64-bit handles and pointers -- most critically
+# GetModuleHandleW, whose truncated value was stored as the AppBar
+# window class hInstance and intermittently crashed RegisterClassExW /
+# CreateWindowExW at startup. All handle-returning calls now carry
+# explicit 64-bit signatures.
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 kernel32.CreateMutexW.restype = ctypes.c_void_p
 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
@@ -429,6 +594,12 @@ user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 user32.GetWindowRect.restype = wintypes.BOOL
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+
+user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+user32.SetWinEventHook.restype = ctypes.c_void_p
+
+
 user32.GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(GUITHREADINFO)]
 user32.GetGUIThreadInfo.restype = wintypes.BOOL
 user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -840,14 +1011,12 @@ class WindowTopProManager:
             self.pinned_hwnds[hwnd] = ov
 
     def sync_borders(self, is_dragging_other: bool = False) -> None:
-        # v1.2.0: only touch Tk when something actually changed. The crash
-        # dump of 22/11/2026 (fastfail stack-cookie, ucrtbase) showed the
-        # process dying inside the Tcl/Tk event dispatch on the main thread
-        # with no ctypes/PIL frames active, while this method used to call
-        # withdraw/deiconify and fully redraw the border canvas on EVERY
-        # tick (~28x/second per pinned window) even when nothing moved.
-        # Idle ticks now cost one rect read; the Win32-only re-raise below
-        # (no Tcl involved) still runs twice a second so the border stays
+        # Only touch Tk when something actually changed: this method
+        # runs on every tick, and redrawing the border canvas
+        # unconditionally (~28x/second per pinned window) wasted the
+        # main thread and stressed the Tcl/Tk dispatch. Idle ticks now
+        # cost one rect read; the Win32-only re-raise below (no Tcl
+        # involved) still runs twice a second so the border stays
         # above its window.
         cfg = self.get_cfg()
         bw, color = int(cfg.get("aot_border_width", 3)), cfg.get("aot_border_color", "#ffffff")
@@ -901,6 +1070,8 @@ class SnapGridManager:
         self.seen_hwnds: set[int] = set()
         self.active_hwnd_bounds: Dict[int, List[float]] = {}
         self._last_restore_scan = 0
+        self._restore_guard: Dict[int, int] = {}
+        self._hook_skip: Dict[int, int] = {}
         self._flash_until_ms = 0
         self._overlay_zones_sig: Optional[Tuple[Tuple[float, ...], ...]] = None
         self._drag_desk: Optional[int] = None
@@ -1213,7 +1384,7 @@ class SnapGridManager:
                 self._flash_until_ms = 0
                 self._hide_overlay()
 
-        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 350):
+        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 60):
             self._last_restore_scan = now_ms
             self._scan_and_restore_new_windows()
 
@@ -1238,35 +1409,63 @@ class SnapGridManager:
                         return parent_h, parent_rect
         return None
 
-    def _restore_window_delayed(self, hwnd: int) -> None:
+    def _restore_window_delayed(self, hwnd: int) -> bool:
         if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
-            return
+            return False
         cfg = self.get_cfg()
         if not cfg.get("snap_restore_last_zone", True):
-            return
+            return False
+        # Reentry guard: placing a window hides and re-shows it, and
+        # the re-show fires EVENT_OBJECT_SHOW again. Without this
+        # guard the event hook would re-enter placement forever
+        # (hide -> show -> event -> hide -> ...), flooding the UI
+        # queue. A window placed within the last 1500 ms is skipped.
+        if int(kernel32.GetTickCount64()) - self._restore_guard.get(hwnd, 0) < 1500:
+            return False
         history: Dict[str, Dict[str, Any]] = cfg.get("snap_app_history", {})
 
+        # Decide first whether this window will be placed at all.
         parent_info = self._find_parent_zone_for_child(hwnd, history)
-        if parent_info is not None:
-            parent_h, parent_norm = parent_info
-            _, work = self.get_monitor_context_for_window(parent_h)
-            mw, mh = work.right - work.left, work.bottom - work.top
-            zx, zy = int(work.left + parent_norm[0] * mw), int(work.top + parent_norm[1] * mh)
-            zw, zh = int((parent_norm[2] - parent_norm[0]) * mw), int((parent_norm[3] - parent_norm[1]) * mh)
-            cr = wintypes.RECT()
-            user32.GetWindowRect(hwnd, ctypes.byref(cr))
-            cw, ch = max(120, cr.right - cr.left), max(90, cr.bottom - cr.top)
-            fit_w, fit_h = min(cw, max(240, zw - 16)), min(ch, max(180, zh - 16))
-            user32.SetWindowPos(hwnd, 0, zx + max(0, (zw - fit_w) // 2), zy + max(0, (zh - fit_h) // 2), fit_w, fit_h, SWP_NOACTIVATE)
-            return
+        rec: Optional[Dict[str, Any]] = None
+        if parent_info is None:
+            exe = get_process_exe_name(hwnd)
+            cand = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
+            if cand and cand.get("norm_rect"):
+                rec = cand
+        if parent_info is None and rec is None:
+            return False
 
-        exe = get_process_exe_name(hwnd)
-        rec = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
-        if rec:
-            norm_rect = rec.get("norm_rect")
-            if norm_rect:
+        # Hide-first placement: the window was created a few frames
+        # ago at the app's own default position (often screen
+        # centre). Hide it before placing and show it again inside
+        # its zone, so it is never seen at the wrong position and
+        # never seen to jump.
+        self._restore_guard[hwnd] = int(kernel32.GetTickCount64())
+        if len(self._restore_guard) > 512:
+            _cut = self._restore_guard[hwnd] - 10000
+            self._restore_guard = {h: t for h, t in self._restore_guard.items() if t > _cut}
+        was_fg = user32.GetForegroundWindow() == hwnd
+        user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        try:
+            if parent_info is not None:
+                parent_h, parent_norm = parent_info
+                _, work = self.get_monitor_context_for_window(parent_h)
+                mw, mh = work.right - work.left, work.bottom - work.top
+                zx, zy = int(work.left + parent_norm[0] * mw), int(work.top + parent_norm[1] * mh)
+                zw, zh = int((parent_norm[2] - parent_norm[0]) * mw), int((parent_norm[3] - parent_norm[1]) * mh)
+                cr = wintypes.RECT()
+                user32.GetWindowRect(hwnd, ctypes.byref(cr))
+                cw, ch = max(120, cr.right - cr.left), max(90, cr.bottom - cr.top)
+                fit_w, fit_h = min(cw, max(240, zw - 16)), min(ch, max(180, zh - 16))
+                user32.SetWindowPos(hwnd, 0, zx + max(0, (zw - fit_w) // 2), zy + max(0, (zh - fit_h) // 2), fit_w, fit_h, SWP_NOACTIVATE)
+            elif rec is not None:
+                norm_rect = rec.get("norm_rect")
                 target_mon, work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
                 self.apply_bounds_to_window(hwnd, target_mon, work, norm_rect, str(rec.get("slot", "3")), tuple(rec.get("indices", [0])), False)
+        finally:
+            if user32.IsWindow(hwnd):
+                user32.ShowWindow(hwnd, 5 if was_fg else 4)  # SW_SHOW / SW_SHOWNOACTIVATE
+        return True
 
     def _scan_and_restore_new_windows(self) -> None:
         visible_now: set[int] = set()
@@ -1290,7 +1489,7 @@ class SnapGridManager:
         own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
         for hwnd in brand_new_hwnds:
             if hwnd not in (self.root.winfo_id(), own_root):
-                self.root.after(220, lambda h=hwnd: self._restore_window_delayed(h))
+                self.root.after(10, lambda h=hwnd: self._restore_window_delayed(h))
 
 
 class PureWin32AppBar:
@@ -1448,7 +1647,7 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif self.path == "/api/init":
-            desktops = [{"num": num, "name": name} for num, name, _g in _vd_desktops()[1]]
+            desktops = [{"num": num, "name": name} for num, name, g in _vd_desktops()[1]]
             curr_num = current_desktop_number()
             curr_name = next((d["name"] for d in desktops if d["num"] == curr_num), f"Desktop {curr_num}")
             payload = json.dumps({"config": load_config_data(), "desktops": desktops, "monitors": enumerate_monitors(), "current_desktop": {"num": curr_num, "name": curr_name}}, ensure_ascii=False).encode("utf-8")
@@ -1522,7 +1721,7 @@ class LehaVortexSuite:
         self.force_redraw = True
         self.pill_hitboxes: List[Tuple[int, int, int, int, int]] = []
         self.optimistic_active_num: Optional[int] = None
-        self.optimistic_ticks = 0
+        self.optimistic_until_ms = 0
         self.studio_port = 0
         self.hover_x: Optional[int] = None
         self.hover_scales: Dict[int, float] = {}
@@ -1530,6 +1729,8 @@ class LehaVortexSuite:
         self._last_sys_check = 0
         self._cached_curr = 1
         self._cached_desktops: Tuple[Tuple[int, str], ...] = ((1, "Desktop 1"),)
+        self._exe_cache: Dict[int, Tuple[int, Optional[str]]] = {}
+
 
         self.config = load_config_data()
         self._config_str = json.dumps(self.config, sort_keys=True)
@@ -1548,26 +1749,46 @@ class LehaVortexSuite:
         if auto_open_studio:
             self.root.after(200, self.open_settings_popup)
 
+    # --- AppBar WNDPROC entry points ----------------------------------
+    # These four run inside the native window procedure (a ctypes
+    # callback dispatched by Tcl's message pump). They must never
+    # call Tk or a modal Win32 loop directly (see the threading rule
+    # at APP_VERSION); they only enqueue via _post_ui, and the main
+    # thread does the work in _drain_ui_queue.
     def _handle_bar_hover(self, x: int) -> None:
+        self._post_ui(lambda: self._bar_hover_main(x))
+
+    def _handle_bar_leave(self) -> None:
+        self._post_ui(self._bar_leave_main)
+
+    def _handle_bar_click(self, x: int, y: int) -> None:
+        self._post_ui(lambda: self._bar_click_main(x, y))
+
+    def _handle_bar_right_click(self, x_root: int, y_root: int) -> None:
+        self._post_ui(lambda: self.show_native_win32_menu(x_root, y_root))
+
+    # --- AppBar actions (main thread, via the UI queue) -----------------
+    def _bar_hover_main(self, x: int) -> None:
         if self.config.get("hover_zoom", False):
             was_idle = self.hover_x is None and not self.is_animating
             self.hover_x = x
             if was_idle:
                 self.tick_now()
 
-    def _handle_bar_leave(self) -> None:
+    def _bar_leave_main(self) -> None:
         if self.hover_x is not None:
             self.hover_x = None
             self.tick_now()
 
-    def _handle_bar_click(self, x: int, y: int) -> None:
+    def _bar_click_main(self, x: int, y: int) -> None:
         for x1, y1, x2, y2, target_num in self.pill_hitboxes:
             if x1 <= x <= x2 and y1 <= y <= y2:
                 curr_num = current_desktop_number()
                 if target_num != curr_num:
-                    self.optimistic_active_num, self.optimistic_ticks, self.force_redraw = target_num, 4, True
+                    self.optimistic_active_num, self.optimistic_until_ms, self.force_redraw = target_num, int(kernel32.GetTickCount64()) + 1500, True
                     self.tick_now()
-                    threading.Thread(target=self._switch_desktop_by_keys, args=(curr_num, target_num), daemon=True).start()
+                    if not _switch_desktop_direct(target_num):
+                        threading.Thread(target=self._switch_desktop_by_keys, args=(curr_num, target_num), daemon=True).start()
                 break
 
     def _switch_desktop_by_keys(self, curr_num: int, target_num: int) -> None:
@@ -1581,9 +1802,6 @@ class LehaVortexSuite:
             user32.keybd_event(0x11, 0, 0x0002, 0)
             user32.keybd_event(0x5B, 0, 0x0002, 0)
             time.sleep(0.18)
-
-    def _handle_bar_right_click(self, x_root: int, y_root: int) -> None:
-        self.show_native_win32_menu(x_root, y_root)
 
     def show_native_win32_menu(self, x_root: int, y_root: int) -> None:
         hmenu = user32.CreatePopupMenu()
@@ -1970,15 +2188,23 @@ class LehaVortexSuite:
                 self.force_redraw = True
             if self.fullscreen_hidden:
                 return
-            real_curr, desktops_list = self.get_all_desktops_data()
-            if self.optimistic_ticks > 0 and self.optimistic_active_num is not None:
-                curr_num = self.optimistic_active_num
-                self.optimistic_ticks -= 1
-            else:
-                curr_num = real_curr
+            curr_num, desktops_list = self.get_all_desktops_data()
             self._cached_curr, self._cached_desktops = curr_num, desktops_list
         else:
             curr_num, desktops_list = self._cached_curr, self._cached_desktops
+        # A pill click sets an optimistic active desktop: it must
+        # light up in THIS render and stay lit until the desktop data
+        # confirms the switch (or the timeout passes) -- even when
+        # the data above came from the 200 ms cache, which is the
+        # branch a click almost always takes (the mouse is hovering
+        # the bar). The override is therefore held by time +
+        # confirmation, not by tick count, and is applied after the
+        # cache/refresh merge.
+        if self.optimistic_active_num is not None:
+            if curr_num == self.optimistic_active_num or now_ms > self.optimistic_until_ms:
+                self.optimistic_active_num = None
+            else:
+                curr_num = self.optimistic_active_num
 
         mon_left, mon_top, mon_width, scale = self.get_primary_monitor_info()
         current_state = (curr_num, desktops_list, mon_left, mon_top, mon_width, scale, self.hover_x, self._config_str)
@@ -1987,10 +2213,11 @@ class LehaVortexSuite:
             self.render_workspaces_bar(curr_num, desktops_list, mon_left, mon_top, mon_width, scale)
 
     def _post_ui(self, fn: Callable[[], None]) -> None:
-        """Thread-safe hand-off: worker threads (keyboard hook, Studio server)
-        must never call into Tk/Tcl directly -- under Tk 9 that can abort the
-        whole process without leaving a Python traceback (vortex_error.log,
-        22/11/2026). They enqueue here; the main thread executes."""
+        """Thread-safe hand-off: worker threads (keyboard hook, Studio
+        server, event hook) must never call into Tk directly -- under
+        Tk 9 that can abort the process with no Python traceback (see
+        the threading rule at APP_VERSION). They enqueue here; the
+        main thread executes."""
         self._ui_queue.put(fn)
 
     def _drain_ui_queue(self) -> None:
@@ -2023,46 +2250,46 @@ class LehaVortexSuite:
         self.appbar.hide()
         self.root.after(80, self.root.destroy)
 
-    def show_bar_context_menu(self, x_root: int, y_root: int) -> None:
-        if hasattr(self, "_ctx_win") and self._ctx_win and self._ctx_win.winfo_exists():
-            self._ctx_win.destroy()
-        popup = tk.Toplevel(self.root)
-        self._ctx_win = popup
-        popup.overrideredirect(True)
-        popup.attributes("-topmost", True)
-        popup.configure(bg="#2a2a35", padx=1, pady=1)
-        box = tk.Frame(popup, bg="#18181b")
-        box.pack(fill="both", expand=True)
+    def listen_window_events(self) -> None:
+        """Instant snap restore: a WinEvent hook on EVENT_OBJECT_SHOW
+        hands every new top-level window to the snap restorer the
+        moment it appears (via _post_ui), instead of waiting for the
+        60 ms poll. With hide-first placement, a remembered window
+        materialises directly in its zone. The poll stays as a
+        backstop; seen_hwnds is updated here so the poll never places
+        the same window twice, and the restore guards keep the
+        restorer's own re-show from re-entering. Own thread + message
+        loop; the callback only posts to the UI queue."""
 
-        def _close(_: Any = None) -> None:
-            if popup.winfo_exists():
-                popup.destroy()
+        def _winevent_proc(_hook: Any, event: int, hwnd: int, id_object: int, id_child: int, _tid: int, _time_ms: int) -> None:
+            if event == 0x8002 and id_object == 0 and id_child == 0 and hwnd:  # EVENT_OBJECT_SHOW / OBJID_WINDOW
+                if self._ui_queue.qsize() > 50:
+                    return  # flood guard: the 60 ms poll is the backstop
+                def _restore(h: int = hwnd) -> None:
+                    snap = self.snap
+                    now = int(kernel32.GetTickCount64())
+                    if now - snap._restore_guard.get(h, 0) < 1500:
+                        return  # our own re-show, or already placed
+                    if now - snap._hook_skip.get(h, 0) < 30000:
+                        return  # decided recently: nothing to place
+                    snap.seen_hwnds.add(h)
+                    if not snap._restore_window_delayed(h):
+                        snap._hook_skip[h] = now
+                self._post_ui(_restore)
 
-        def _add_item(label: str, cmd: Callable[[], None], danger: bool = False) -> None:
-            btn = tk.Label(box, text=label, bg="#18181b", fg="#f87171" if danger else "#f4f4f5", font=("Segoe UI", 9), anchor="w", padx=12, pady=6, cursor="hand2")
-            btn.pack(fill="x")
-            btn.bind("<Enter>", lambda _: btn.configure(bg="#27272f"))
-            btn.bind("<Leave>", lambda _: btn.configure(bg="#18181b"))
-            btn.bind("<Button-1>", lambda _: (_close(), cmd()))
-
-        _add_item("Open LEHA Vortex Studio (Ctrl+Alt+V)", self.open_settings_popup)
-        _add_item("Hide Bar (Ctrl+Alt+H)", self.toggle_visibility)
-        tk.Frame(box, bg="#2a2a35", height=1).pack(fill="x", pady=2)
-        _add_item("Exit LEHA Vortex Suite", self.quit_app, danger=True)
-
-        popup.update_idletasks()
-        sw = user32.GetSystemMetrics(0)
-        pw, ph = popup.winfo_reqwidth(), popup.winfo_reqheight()
-        hwnd_p = user32.GetParent(popup.winfo_id()) or popup.winfo_id()
-        user32.SetWindowPos(hwnd_p, HWND_TOPMOST, min(x_root, sw - pw - 8), y_root + 4, pw, ph, SWP_SHOWWINDOW)
-        user32.SetForegroundWindow(hwnd_p)
-        popup.focus_force()
-        popup.bind("<FocusOut>", _close)
-        popup.bind("<Escape>", _close)
-        popup.after(3000, _close)
+        self._winevent_proc_ref = WINEVENTPROC_TYPE(_winevent_proc)
+        hook = user32.SetWinEventHook(0x8002, 0x8002, None, self._winevent_proc_ref, 0, 0, 0x0001)  # WINEVENT_SKIPOWNPROCESS
+        if not hook:
+            _log_error("winevent-hook", RuntimeError(f"winerror={kernel32.GetLastError()}"))
+            return
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
 
     def run(self) -> None:
         threading.Thread(target=self.listen_hotkeys, daemon=True).start()
+        threading.Thread(target=self.listen_window_events, daemon=True).start()
         self.root.mainloop()
 
 
