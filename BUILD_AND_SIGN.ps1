@@ -7,10 +7,12 @@ Get-Process | Where-Object { $_.ProcessName -match "^python|LEHA Vortex" } | Sto
 Start-Sleep -Milliseconds 300
 
 # Đảm bảo PyInstaller sẵn sàng
-python -m PyInstaller --version 2>$null | Out-Null
+$ErrorActionPreference = "Continue"
+cmd /c "python -m PyInstaller --version >nul 2>&1"
 if ($LASTEXITCODE -ne 0) {
-    pip install --quiet pyinstaller
+    python -m pip install --quiet pyinstaller
 }
+$ErrorActionPreference = "Stop"
 
 # Đóng gói One-File Windows Executable kèm studio_ui.html & app_icon.ico
 python -m PyInstaller --noconfirm --clean --onefile --windowed `
@@ -22,6 +24,8 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed `
     --hidden-import "pyvda" `
     --hidden-import "win32com.client" `
     --hidden-import "PIL" `
+    --hidden-import "comtypes" `
+    --collect-all "comtypes" `
     "vortex_suite.py"
 
 $exePath = Join-Path $dir "dist\LEHA Vortex Workspace Suite.exe"

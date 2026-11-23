@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import gc
 import json
 import math
 import os
@@ -368,13 +369,15 @@ def _switch_desktop_direct(target_num: int) -> bool:
         mgr.SwitchDesktop(ctypes.cast(desk, ctypes.c_void_p))
         return True
     except Exception as exc:
+        global _vdi_bundle
+        _vdi_bundle = None
         _log_error("vd-switch-direct", exc)
         return False
 
 
 # --- Crash/error diagnostics: pythonw has no console, so failures are written
 # to vortex_error.log next to this file instead of vanishing silently.
-_ERROR_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vortex_error.log")
+_ERROR_LOG_PATH = os.path.join(os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__)), "vortex_error.log")
 
 
 def _log_error(where: str, exc: Optional[BaseException] = None) -> None:
@@ -418,7 +421,7 @@ def current_desktop_number() -> int:
     poll cheap and pins one stable scope for a whole drag session.
     """
     now = time.monotonic()
-    if now - float(_desk_cache["ms"]) < 0.1:
+    if now - float(_desk_cache["ms"]) < 0.025:
         return int(_desk_cache["num"])
     guids = _vd_guid_list()
     if guids:
@@ -666,6 +669,7 @@ user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, cty
 user32.keybd_event.restype = None
 
 
+
 FONT_CACHE: Dict[Tuple[int, str, bool], Any] = {}
 TEXT_BBOX_CACHE: Dict[Tuple[str, Tuple[int, str, bool]], Tuple[int, int, int, int]] = {}
 FONTS = {
@@ -793,7 +797,7 @@ def load_config_data() -> Dict[str, Any]:
         "active_underline": False,
         "active_border": True,
         "active_pop_padding": 2,
-        "hover_zoom": False,
+        "hover_zoom": True, "smoothness": 0.45,
         "font_size": 13,
         "font_weight": "bold",
         "font_italic": False,
@@ -880,37 +884,79 @@ def enumerate_monitors() -> List[Dict[str, str]]:
 
 
 def get_explorer_target_folder() -> str:
+    com_inited = False
     try:
-        import win32com.client
-        hwnd = user32.GetForegroundWindow()
-        shell = win32com.client.Dispatch("Shell.Application")
-        for window in shell.Windows():
-            if window.HWND == hwnd and window.LocationURL.startswith("file:///"):
-                path = urllib.parse.unquote(window.LocationURL[8:]).replace("/", "\\")
-                if os.path.isdir(path):
-                    return path
-        pt = POINT()
-        user32.GetCursorPos(ctypes.byref(pt))
-        root_hwnd = user32.GetAncestor(user32.WindowFromPoint(pt), 2)
-        for window in shell.Windows():
-            if window.HWND == root_hwnd and window.LocationURL.startswith("file:///"):
-                path = urllib.parse.unquote(window.LocationURL[8:]).replace("/", "\\")
-                if os.path.isdir(path):
-                    return path
+        import pythoncom
+        pythoncom.CoInitialize()
+        com_inited = True
     except Exception:
         pass
+    try:
+        import win32com.client
+        shell = win32com.client.Dispatch("Shell.Application")
+        windows = list(shell.Windows())
+
+        # 1. Ưu tiên cửa sổ/tab Explorer ngay dưới con trỏ chuột (kể cả khi chưa click focus)
+        pt = POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        hwnd_pt = user32.WindowFromPoint(pt)
+        root_pt = user32.GetAncestor(hwnd_pt, 2) or hwnd_pt
+
+        # 2. Cửa sổ đang active (foreground)
+        fg_hwnd = user32.GetForegroundWindow()
+        root_fg = user32.GetAncestor(fg_hwnd, 2) or fg_hwnd
+
+        for target_h in (root_pt, hwnd_pt, root_fg, fg_hwnd):
+            if not target_h:
+                continue
+            for w in windows:
+                try:
+                    if int(w.HWND) == int(target_h):
+                        url = str(w.LocationURL or "")
+                        if url.lower().startswith("file:///"):
+                            path = urllib.parse.unquote(url[8:]).replace("/", "\\")
+                            if os.path.isdir(path):
+                                return path
+                except Exception:
+                    continue
+
+        # 3. Nếu đang đứng ở Explorer nhưng khác handle tab, lấy cửa sổ Explorer đang nổi trên cùng
+        cls_buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(root_pt, cls_buf, 64)
+        fg_cls = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(root_fg, fg_cls, 64)
+        if "CabinetWClass" in (cls_buf.value, fg_cls.value):
+            for w in windows:
+                try:
+                    url = str(w.LocationURL or "")
+                    if url.lower().startswith("file:///"):
+                        path = urllib.parse.unquote(url[8:]).replace("/", "\\")
+                        if os.path.isdir(path):
+                            return path
+                except Exception:
+                    continue
+    except Exception as exc:
+        _log_error("quick-shell-explorer", exc)
+    finally:
+        if com_inited:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
     return os.path.expanduser("~")
 
 
 def launch_powershell(admin: bool = False, use_wt: bool = True) -> None:
-    folder = get_explorer_target_folder()
+    folder = os.path.normpath(get_explorer_target_folder())
     if use_wt and shutil.which("wt.exe"):
         if admin:
             shell32.ShellExecuteW(None, "runas", "wt.exe", f'-d "{folder}"', folder, 1)
         else:
-            subprocess.Popen(["wt.exe", "-d", folder], creationflags=0x00000008)
+            subprocess.Popen(["wt.exe", "-d", folder], cwd=folder, creationflags=0x00000008)
     else:
-        shell32.ShellExecuteW(None, "runas" if admin else "open", "powershell.exe", f'-NoExit -Command "Set-Location -LiteralPath \'{folder}\'"', folder, 1)
+        ps_cmd = f'Set-Location -LiteralPath \'{folder}\''
+        shell32.ShellExecuteW(None, "runas" if admin else "open", "powershell.exe", f'-NoExit -Command "{ps_cmd}"', folder, 1)
 
 
 class WindowTopProManager:
@@ -1395,7 +1441,7 @@ class SnapGridManager:
                 self._flash_until_ms = 0
                 self._hide_overlay()
 
-        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 350):
+        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 15):
             self._last_restore_scan = now_ms
             self._scan_and_restore_new_windows()
 
@@ -1422,6 +1468,10 @@ class SnapGridManager:
 
     def _restore_window_delayed(self, hwnd: int) -> None:
         if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return
+        cls_buf = ctypes.create_unicode_buffer(128)
+        user32.GetClassNameW(hwnd, cls_buf, 128)
+        if cls_buf.value in ("#32770", "OperationStatusWindow", "Shell_TrayWnd", "NotifyIconOverflowWindow"):
             return
         cfg = self.get_cfg()
         if not cfg.get("snap_restore_last_zone", True):
@@ -1450,6 +1500,20 @@ class SnapGridManager:
                 target_mon, work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
                 self.apply_bounds_to_window(hwnd, target_mon, work, norm_rect, str(rec.get("slot", "3")), tuple(rec.get("indices", [0])), False)
 
+    def restore_single_hwnd_instant(self, hwnd: int) -> None:
+        if not hwnd or hwnd in self.seen_hwnds:
+            return
+        if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return
+        ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        if (ex_style & WS_EX_TOOLWINDOW) or user32.GetWindowTextLengthW(hwnd) <= 0:
+            return
+        own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+        if hwnd in (self.root.winfo_id(), own_root):
+            return
+        self.seen_hwnds.add(hwnd)
+        self._restore_window_delayed(hwnd)
+
     def _scan_and_restore_new_windows(self) -> None:
         visible_now: set[int] = set()
         enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -1472,7 +1536,7 @@ class SnapGridManager:
         own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
         for hwnd in brand_new_hwnds:
             if hwnd not in (self.root.winfo_id(), own_root):
-                self.root.after(220, lambda h=hwnd: self._restore_window_delayed(h))
+                self._restore_window_delayed(hwnd)
 
 
 class PureWin32AppBar:
@@ -1603,7 +1667,7 @@ class PureWin32AppBar:
 
         if not user32.IsWindowVisible(self.hwnd):
             user32.ShowWindow(self.hwnd, 4)
-        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, final_left, final_top, w, h, SWP_NOACTIVATE)
+            user32.SetWindowPos(self.hwnd, HWND_TOPMOST, final_left, final_top, w, h, SWP_NOACTIVATE)
 
         screen_dc = user32.GetDC(0)
         user32.UpdateLayeredWindow(
@@ -1737,9 +1801,19 @@ class LehaVortexSuite:
     # v1.2.2 note at APP_VERSION. They only enqueue; the main thread
     # does the work via _drain_ui_queue.
     def _handle_bar_hover(self, x: int) -> None:
-        self._post_ui(lambda: self._bar_hover_main(x))
+        self._latest_hover_x = x
+        if not getattr(self, "_hover_queued", False):
+            self._hover_queued = True
+            self._post_ui(self._flush_bar_hover)
+
+    def _flush_bar_hover(self) -> None:
+        self._hover_queued = False
+        x = getattr(self, "_latest_hover_x", None)
+        if x is not None:
+            self._bar_hover_main(x)
 
     def _handle_bar_leave(self) -> None:
+        self._latest_hover_x = None
         self._post_ui(self._bar_leave_main)
 
     def _handle_bar_click(self, x: int, y: int) -> None:
@@ -1826,7 +1900,14 @@ class LehaVortexSuite:
         server = HTTPServer(("127.0.0.1", 0), StudioRequestHandler)
         server.on_config_saved = self.reload_config_immediately  # type: ignore[attr-defined]
         self.studio_port = server.server_address[1]
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        def _serve_with_com() -> None:
+            try:
+                import comtypes
+                comtypes.CoInitialize()
+            except Exception:
+                pass
+            server.serve_forever()
+        threading.Thread(target=_serve_with_com, daemon=True).start()
 
     def reload_config_immediately(self) -> None:
         def _apply() -> None:
@@ -1933,7 +2014,7 @@ class LehaVortexSuite:
                 while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                     user32.TranslateMessage(ctypes.byref(msg))
                     user32.DispatchMessageW(ctypes.byref(msg))
-                kernel32.Sleep(10)
+                kernel32.Sleep(8)
         finally:
             if h_hook:
                 user32.UnhookWindowsHookEx(h_hook)
@@ -1943,6 +2024,7 @@ class LehaVortexSuite:
         if hasattr(self, "_app_count_cache") and (now_ms - getattr(self, "_last_app_count_ms", 0) < 600):
             return self._app_count_cache  # type: ignore[return-value]
         counts: Dict[int, int] = {}
+        global _vdm_instance
         vdm = _get_vdm()
         vd_guids = _vd_guid_list()
         if vdm is not None and vd_guids:
@@ -1951,23 +2033,28 @@ class LehaVortexSuite:
             enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
             def _enum_cb(hwnd: int, _lparam: int) -> bool:
-                if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+                if user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
                     if not (user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) and user32.GetWindowTextLengthW(hwnd) > 0:
-                        visible.append(hwnd)
+                        if not user32.GetWindow(hwnd, GW_OWNER):
+                            visible.append(hwnd)
                 return True
 
             try:
                 user32.EnumWindows(enum_proc(_enum_cb), 0)
                 for hwnd in visible:
+                    if not user32.IsWindow(hwnd):
+                        continue
                     try:
                         desk_guid = vdm.GetWindowDesktopId(hwnd)
                         num = guid_to_num.get(str(desk_guid).strip("{}").lower())
                         if num:
                             counts[num] = counts.get(num, 0) + 1
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        if "0x800706ba" in str(exc).lower() or "0x800706be" in str(exc).lower():
+                            _vdm_instance = None
+                            break
             except Exception:
-                pass
+                _vdm_instance = None
         self._app_count_cache, self._last_app_count_ms = counts, now_ms
         return counts
 
@@ -2157,7 +2244,7 @@ class LehaVortexSuite:
 
         now_ms = int(kernel32.GetTickCount64())
         is_hovering = self.hover_x is not None or self.is_animating
-        if not is_hovering or (now_ms - self._last_sys_check >= 200):
+        if not is_hovering or (now_ms - self._last_sys_check >= 45):
             self._last_sys_check = now_ms
             is_fs = self.is_foreground_fullscreen()
             if is_fs and not self.fullscreen_hidden:
@@ -2224,7 +2311,7 @@ class LehaVortexSuite:
             self.tick_now()
         except Exception as exc:
             _log_error("update-loop", exc)
-        self.root.after(8 if (self.hover_x is not None or self.is_animating or self.snap.dragging_hwnd) else 35, self.update_loop)
+        self.root.after(6, self.update_loop)
 
     def quit_app(self) -> None:
         self.running = False
@@ -2274,6 +2361,17 @@ class LehaVortexSuite:
         popup.after(3000, _close)
 
     def run(self) -> None:
+        try:
+            import comtypes
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+        gc.disable()
+        def _periodic_gc() -> None:
+            if self.running:
+                gc.collect()
+                self.root.after(5000, _periodic_gc)
+        self.root.after(5000, _periodic_gc)
         threading.Thread(target=self.listen_hotkeys, daemon=True).start()
         self.root.mainloop()
 
