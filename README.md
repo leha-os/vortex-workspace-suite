@@ -1,4 +1,4 @@
-# LEHA Vortex Workspace Suite (v1.5.8)
+# LEHA Vortex Workspace Suite (v1.5.9)
 
 A Windows 10/11 workspace and window management engine: a virtual
 desktop bar, per-desktop snap layouts, and window utilities in a
@@ -51,8 +51,8 @@ with Authenticode (self-signed certificate `CN=Le Ha, O=LEHA Studio,
 C=VN`, created on first use and trusted in the CurrentUser stores),
 and writes two archives to the Desktop:
 
-- `LEHA_Vortex_Workspace_Suite_v1.5.8_Signed.zip` — portable release
-- `LEHA_Vortex_Workspace_Suite_v1.5.8_Source.zip` — clean source backup
+- `LEHA_Vortex_Workspace_Suite_v1.5.9_Signed.zip` — portable release
+- `LEHA_Vortex_Workspace_Suite_v1.5.9_Source.zip` — clean source backup
 
 ## License
 

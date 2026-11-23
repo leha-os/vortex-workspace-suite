@@ -53,14 +53,14 @@ if ($sig.Status -ne "Valid") {
 }
 
 # Publish a clean release (portable ZIP) and a source backup ZIP to the Desktop
-$releaseDir = Join-Path $dir "dist\LEHA_Vortex_Workspace_Suite_v1.5.8_Signed"
+$releaseDir = Join-Path $dir "dist\LEHA_Vortex_Workspace_Suite_v1.5.9_Signed"
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 Copy-Item -LiteralPath $exePath -Destination $releaseDir -Force
 Copy-Item -LiteralPath (Join-Path $dir "LICENSE") -Destination $releaseDir -Force -ErrorAction SilentlyContinue
 Copy-Item -LiteralPath (Join-Path $dir "README.md") -Destination $releaseDir -Force -ErrorAction SilentlyContinue
 
-$relZip = Join-Path $desktop "LEHA_Vortex_Workspace_Suite_v1.5.8_Signed.zip"
-$srcZip = Join-Path $desktop "LEHA_Vortex_Workspace_Suite_v1.5.8_Source.zip"
+$relZip = Join-Path $desktop "LEHA_Vortex_Workspace_Suite_v1.5.9_Signed.zip"
+$srcZip = Join-Path $desktop "LEHA_Vortex_Workspace_Suite_v1.5.9_Source.zip"
 Remove-Item -LiteralPath $relZip, $srcZip -Force -ErrorAction SilentlyContinue
 
 Compress-Archive -Path "$releaseDir\*" -DestinationPath $relZip -CompressionLevel Optimal

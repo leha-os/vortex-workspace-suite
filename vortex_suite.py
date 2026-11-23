@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.5.8)
+LEHA Vortex Workspace Suite (v1.5.9)
 Windows 10/11 workspace and window management engine.
 
 Components:
@@ -424,7 +424,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.5.8"
+APP_VERSION = "v1.5.9"
 
 # Threading rule (hard): never call into Tk from a ctypes callback or
 # a worker thread. _tkinter keeps a single saved thread-state slot for
@@ -1435,6 +1435,34 @@ class SnapGridManager:
         if parent_info is None and rec is None:
             return False
 
+        # Already in place: an app that reopens exactly at its
+        # recorded zone (its own remembered position IS the zone,
+        # because placement put it there last time) must not be
+        # hidden and re-shown -- that cycle reads as a blink/jump.
+        # Target rect computed exactly as apply_bounds_to_window
+        # computes it (spacing + DWM frame padding included).
+        if parent_info is None and rec is not None and not user32.IsZoomed(hwnd):
+            _tmon, _work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
+            _mw, _mh = _work.right - _work.left, _work.bottom - _work.top
+            _spacing = int(cfg.get("snap_zone_spacing", 8))
+            _half = _spacing // 2
+            _nr = rec["norm_rect"]
+            _wr, _dr = wintypes.RECT(), wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(_wr))
+            if dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(_dr), ctypes.sizeof(_dr)) == 0:
+                _pl, _pt = max(0, _dr.left - _wr.left), max(0, _dr.top - _wr.top)
+                _pr, _pb = max(0, _wr.right - _dr.right), max(0, _wr.bottom - _dr.bottom)
+            else:
+                _pl = _pt = _pr = _pb = 0
+            _tx = int(_work.left + _nr[0] * _mw) + _half - _pl
+            _ty = int(_work.top + _nr[1] * _mh) + _half - _pt
+            _tw = max(80, int((_nr[2] - _nr[0]) * _mw) - _spacing + _pl + _pr)
+            _th = max(60, int((_nr[3] - _nr[1]) * _mh) - _spacing + _pt + _pb)
+            if (abs(_wr.left - _tx) <= 3 and abs(_wr.top - _ty) <= 3
+                    and abs((_wr.right - _wr.left) - _tw) <= 3 and abs((_wr.bottom - _wr.top) - _th) <= 3):
+                self.active_hwnd_bounds[hwnd] = rec["norm_rect"]
+                return True
+
         # Hide-first placement: the window was created a few frames
         # ago at the app's own default position (often screen
         # centre). Hide it before placing and show it again inside
@@ -1484,7 +1512,15 @@ class SnapGridManager:
             return
 
         brand_new_hwnds = [h for h in visible_now if h not in self.seen_hwnds]
-        self.seen_hwnds = visible_now
+        # Union, never replace: windows on other virtual desktops (and
+        # minimised windows) are absent from visible_now, and evicting
+        # them would make them "brand new" again on the next desktop
+        # switch -- every window then got re-placed and visibly jumped
+        # on every switch. Destroyed windows are pruned instead, so
+        # the set cannot grow without bound.
+        self.seen_hwnds |= visible_now
+        if len(self.seen_hwnds) > 1024:
+            self.seen_hwnds = {h for h in self.seen_hwnds if user32.IsWindow(h)}
 
         own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
         for hwnd in brand_new_hwnds:
@@ -2267,6 +2303,8 @@ class LehaVortexSuite:
                     return  # flood guard: the 60 ms poll is the backstop
                 def _restore(h: int = hwnd) -> None:
                     snap = self.snap
+                    if h in snap.seen_hwnds:
+                        return  # known window uncloaking on a desktop switch, not a new window
                     now = int(kernel32.GetTickCount64())
                     if now - snap._restore_guard.get(h, 0) < 1500:
                         return  # our own re-show, or already placed
