@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.2.5)
+LEHA Vortex Workspace Suite (v1.2.6)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -434,7 +434,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.5"
+APP_VERSION = "v1.2.6"
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -1395,7 +1395,7 @@ class SnapGridManager:
                 self._flash_until_ms = 0
                 self._hide_overlay()
 
-        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 350):
+        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 60):
             self._last_restore_scan = now_ms
             self._scan_and_restore_new_windows()
 
@@ -1428,27 +1428,69 @@ class SnapGridManager:
             return
         history: Dict[str, Dict[str, Any]] = cfg.get("snap_app_history", {})
 
+        # Decide first whether this window will be placed at all.
         parent_info = self._find_parent_zone_for_child(hwnd, history)
-        if parent_info is not None:
-            parent_h, parent_norm = parent_info
-            _, work = self.get_monitor_context_for_window(parent_h)
-            mw, mh = work.right - work.left, work.bottom - work.top
-            zx, zy = int(work.left + parent_norm[0] * mw), int(work.top + parent_norm[1] * mh)
-            zw, zh = int((parent_norm[2] - parent_norm[0]) * mw), int((parent_norm[3] - parent_norm[1]) * mh)
-            cr = wintypes.RECT()
-            user32.GetWindowRect(hwnd, ctypes.byref(cr))
-            cw, ch = max(120, cr.right - cr.left), max(90, cr.bottom - cr.top)
-            fit_w, fit_h = min(cw, max(240, zw - 16)), min(ch, max(180, zh - 16))
-            user32.SetWindowPos(hwnd, 0, zx + max(0, (zw - fit_w) // 2), zy + max(0, (zh - fit_h) // 2), fit_w, fit_h, SWP_NOACTIVATE)
+        rec: Optional[Dict[str, Any]] = None
+        if parent_info is None:
+            exe = get_process_exe_name(hwnd)
+            cand = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
+            if cand and cand.get("norm_rect"):
+                rec = cand
+        if parent_info is None and rec is None:
             return
 
-        exe = get_process_exe_name(hwnd)
-        rec = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
-        if rec:
-            norm_rect = rec.get("norm_rect")
-            if norm_rect:
+        # Already in place: an app that reopens exactly at its
+        # recorded zone (its own remembered position IS the zone,
+        # because placement put it there last time) must not be
+        # hidden and re-shown -- that cycle reads as a blink/jump.
+        # Target rect computed exactly as apply_bounds_to_window
+        # computes it (spacing + DWM frame padding included).
+        if rec is not None and not user32.IsZoomed(hwnd):
+            _tmon, _work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
+            _mw, _mh = _work.right - _work.left, _work.bottom - _work.top
+            _spacing = int(cfg.get("snap_zone_spacing", 8))
+            _half = _spacing // 2
+            _nr = rec["norm_rect"]
+            _wr, _dr = wintypes.RECT(), wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(_wr))
+            if dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(_dr), ctypes.sizeof(_dr)) == 0:
+                _pl, _pt = max(0, _dr.left - _wr.left), max(0, _dr.top - _wr.top)
+                _pr, _pb = max(0, _wr.right - _dr.right), max(0, _wr.bottom - _dr.bottom)
+            else:
+                _pl = _pt = _pr = _pb = 0
+            _tx = int(_work.left + _nr[0] * _mw) + _half - _pl
+            _ty = int(_work.top + _nr[1] * _mh) + _half - _pt
+            _tw = max(80, int((_nr[2] - _nr[0]) * _mw) - _spacing + _pl + _pr)
+            _th = max(60, int((_nr[3] - _nr[1]) * _mh) - _spacing + _pt + _pb)
+            if (abs(_wr.left - _tx) <= 3 and abs(_wr.top - _ty) <= 3
+                    and abs((_wr.right - _wr.left) - _tw) <= 3 and abs((_wr.bottom - _wr.top) - _th) <= 3):
+                self.active_hwnd_bounds[hwnd] = rec["norm_rect"]
+                return
+
+        # Hide-first placement: hide the window before placing it
+        # and show it again inside its zone, so it is never seen at
+        # the app's default position and never seen to jump.
+        was_fg = user32.GetForegroundWindow() == hwnd
+        user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        try:
+            if parent_info is not None:
+                parent_h, parent_norm = parent_info
+                _, work = self.get_monitor_context_for_window(parent_h)
+                mw, mh = work.right - work.left, work.bottom - work.top
+                zx, zy = int(work.left + parent_norm[0] * mw), int(work.top + parent_norm[1] * mh)
+                zw, zh = int((parent_norm[2] - parent_norm[0]) * mw), int((parent_norm[3] - parent_norm[1]) * mh)
+                cr = wintypes.RECT()
+                user32.GetWindowRect(hwnd, ctypes.byref(cr))
+                cw, ch = max(120, cr.right - cr.left), max(90, cr.bottom - cr.top)
+                fit_w, fit_h = min(cw, max(240, zw - 16)), min(ch, max(180, zh - 16))
+                user32.SetWindowPos(hwnd, 0, zx + max(0, (zw - fit_w) // 2), zy + max(0, (zh - fit_h) // 2), fit_w, fit_h, SWP_NOACTIVATE)
+            elif rec is not None:
+                norm_rect = rec.get("norm_rect")
                 target_mon, work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
                 self.apply_bounds_to_window(hwnd, target_mon, work, norm_rect, str(rec.get("slot", "3")), tuple(rec.get("indices", [0])), False)
+        finally:
+            if user32.IsWindow(hwnd):
+                user32.ShowWindow(hwnd, 5 if was_fg else 4)  # SW_SHOW / SW_SHOWNOACTIVATE
 
     def _scan_and_restore_new_windows(self) -> None:
         visible_now: set[int] = set()
@@ -1467,12 +1509,20 @@ class SnapGridManager:
             return
 
         brand_new_hwnds = [h for h in visible_now if h not in self.seen_hwnds]
-        self.seen_hwnds = visible_now
+        # Union, never replace: windows on other virtual desktops (and
+        # minimised windows) are absent from visible_now, and evicting
+        # them would make them "brand new" again on the next desktop
+        # switch -- every window then got re-placed and visibly jumped
+        # on every switch. Destroyed windows are pruned instead, so
+        # the set cannot grow without bound.
+        self.seen_hwnds |= visible_now
+        if len(self.seen_hwnds) > 1024:
+            self.seen_hwnds = {h for h in self.seen_hwnds if user32.IsWindow(h)}
 
         own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
         for hwnd in brand_new_hwnds:
             if hwnd not in (self.root.winfo_id(), own_root):
-                self.root.after(220, lambda h=hwnd: self._restore_window_delayed(h))
+                self.root.after(10, lambda h=hwnd: self._restore_window_delayed(h))
 
 
 class PureWin32AppBar:
@@ -2184,7 +2234,7 @@ class LehaVortexSuite:
         # ticks, which at the 8 ms hover redraw rate burned in ~30 ms --
         # long before the cached data caught up -- so the pill blinked
         # back to the old desktop once (the flash the user reported).
-        # v1.2.5 therefore holds the override by time + confirmation,
+        # v1.2.6 therefore holds the override by time + confirmation,
         # not by tick count.
         if self.optimistic_active_num is not None:
             if curr_num == self.optimistic_active_num or now_ms > self.optimistic_until_ms:
