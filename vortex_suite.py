@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.2.8)
+LEHA Vortex Workspace Suite (v1.2.9)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -434,7 +434,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.8"
+APP_VERSION = "v1.2.9"
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -1085,6 +1085,7 @@ class SnapGridManager:
         self.seen_hwnds: set[int] = set()
         self.active_hwnd_bounds: Dict[int, List[float]] = {}
         self._last_restore_scan = 0
+        self._last_rescue_scan = 0
         self._restore_guard: Dict[int, int] = {}
         self._hook_hidden: Dict[int, bool] = {}
         self._flash_until_ms = 0
@@ -1377,14 +1378,22 @@ class SnapGridManager:
             else:
                 self._hide_overlay()
         else:
-            self.is_resize_session = False
-            self.resize_start_rect = None
-            self.resize_start_norm = None
-            if self.resizing_hwnd is not None:
+            # A move/size session can look finished for one poll while
+            # the user still holds the mouse button (the foreground /
+            # GUI-thread probe hiccups). Ending the drag then would
+            # yank the window into a zone mid-drag -- the window feels
+            # glued to the zone and fights the mouse. Only a real
+            # release of the button ends a drag.
+            drag_active_held = bool(user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000) and (self.dragging_hwnd is not None or self.resizing_hwnd is not None)
+            if not drag_active_held:
+                self.is_resize_session = False
+                self.resize_start_rect = None
+                self.resize_start_norm = None
+            if self.resizing_hwnd is not None and not drag_active_held:
                 self.resizing_hwnd = None
                 self.dragging_hwnd = None
                 self._drag_desk = None
-            elif self.dragging_hwnd is not None:
+            elif self.dragging_hwnd is not None and not drag_active_held:
                 target_hwnd, target_mon, target_sel = self.dragging_hwnd, self.overlay_mon_id, self.selected_indices
                 self.dragging_hwnd = None
                 self._hide_overlay()
@@ -1400,9 +1409,72 @@ class SnapGridManager:
                 self._flash_until_ms = 0
                 self._hide_overlay()
 
-        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 60):
+        if cfg.get("snap_restore_last_zone", True) and not in_movesize and self.dragging_hwnd is None and (now_ms - self._last_restore_scan >= 200):
             self._last_restore_scan = now_ms
             self._scan_and_restore_new_windows()
+
+        if self.dragging_hwnd is None and (now_ms - self._last_rescue_scan >= 500):
+            self._last_rescue_scan = now_ms
+            self._rescue_offscreen_windows()
+
+    def _rescue_offscreen_windows(self) -> None:
+        # Safety net: a window that ended up mostly outside every
+        # monitor's work area -- whoever put it there (an app that
+        # remembered a position from another display setup, a restore
+        # gone wrong) -- is pulled back fully inside the work area it
+        # overlaps most, size preserved where it fits. Only badly
+        # off-screen windows are touched: under 30% visible, or the
+        # title strip unreachable by mouse.
+        try:
+            works = [m["rcWork"] for m in get_all_physical_monitors()]
+        except Exception:
+            return
+        if not works:
+            return
+        own_pid = os.getpid()
+        candidates: List[int] = []
+        enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def _enum_cb(hwnd: int, _: int) -> bool:
+            if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd) and not user32.IsZoomed(hwnd):
+                ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                if not (ex_style & WS_EX_TOOLWINDOW) and user32.GetWindowTextLengthW(hwnd) > 0:
+                    candidates.append(hwnd)
+            return True
+
+        user32.EnumWindows(enum_proc(_enum_cb), 0)
+        for hwnd in candidates:
+            try:
+                if hwnd in (self.dragging_hwnd, self.resizing_hwnd):
+                    continue
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value == own_pid:
+                    continue
+                wr = wintypes.RECT()
+                if not user32.GetWindowRect(hwnd, ctypes.byref(wr)):
+                    continue
+                ww, wh = wr.right - wr.left, wr.bottom - wr.top
+                if ww <= 0 or wh <= 0:
+                    continue
+                best_work, best_area = None, 0
+                for wk in works:
+                    ix = max(0, min(wr.right, wk.right) - max(wr.left, wk.left))
+                    iy = max(0, min(wr.bottom, wk.bottom) - max(wr.top, wk.top))
+                    if ix * iy > best_area:
+                        best_area, best_work = ix * iy, wk
+                title_x = wr.left + min(120, ww // 2)
+                title_ok = any(wk.left <= title_x < wk.right and wk.top <= wr.top + 10 < wk.bottom for wk in works)
+                if best_work is not None and best_area >= 0.30 * ww * wh and title_ok:
+                    continue
+                wk = best_work if best_work is not None else works[0]
+                nw, nh = min(ww, wk.right - wk.left), min(wh, wk.bottom - wk.top)
+                nx = min(max(wr.left, wk.left), wk.right - nw)
+                ny = min(max(wr.top, wk.top), wk.bottom - nh)
+                if (nx, ny, nw, nh) != (wr.left, wr.top, ww, wh):
+                    user32.SetWindowPos(hwnd, 0, nx, ny, nw, nh, SWP_NOACTIVATE)
+            except Exception:
+                continue
 
     def _find_parent_zone_for_child(self, hwnd: int, history: Dict[str, Dict[str, Any]]) -> Optional[Tuple[int, List[float]]]:
         owner_hwnd = user32.GetWindow(hwnd, GW_OWNER) or user32.GetParent(hwnd)
