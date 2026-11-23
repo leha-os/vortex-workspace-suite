@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.2.10)
+LEHA Vortex Workspace Suite (v1.2.5)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -434,7 +434,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.10"
+APP_VERSION = "v1.2.5"
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -525,9 +525,6 @@ class TRACKMOUSEEVENT(ctypes.Structure):
 
 
 WNDPROC_TYPE = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
-WINEVENTPROC_TYPE = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, wintypes.DWORD, wintypes.HWND, ctypes.c_long, ctypes.c_long, wintypes.DWORD, wintypes.DWORD)
-user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, WINEVENTPROC_TYPE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
-user32.SetWinEventHook.restype = ctypes.c_void_p
 
 
 class WNDCLASSEXW(ctypes.Structure):
@@ -807,6 +804,7 @@ def load_config_data() -> Dict[str, Any]:
         "pill_radius": 9,
         "height": 28,
         "opacity": 0.94,
+        "auto_hide_fullscreen": False,
     }
     p = get_config_path()
     if os.path.exists(p):
@@ -1085,9 +1083,6 @@ class SnapGridManager:
         self.seen_hwnds: set[int] = set()
         self.active_hwnd_bounds: Dict[int, List[float]] = {}
         self._last_restore_scan = 0
-        self._last_rescue_scan = 0
-        self._restore_guard: Dict[int, int] = {}
-        self._hook_hidden: Dict[int, bool] = {}
         self._flash_until_ms = 0
         self._overlay_zones_sig: Optional[Tuple[Tuple[float, ...], ...]] = None
         self._drag_desk: Optional[int] = None
@@ -1238,21 +1233,13 @@ class SnapGridManager:
         alpha_val = float(self.get_cfg().get("snap_overlay_opacity", 0.38))
         if self.overlay_win is None or not self.overlay_win.winfo_exists():
             ov = tk.Toplevel(self.root)
-            ov.withdraw()
             ov.overrideredirect(True)
             ov.attributes("-topmost", True)
-            ov.attributes("-alpha", max(0.05, min(0.95, alpha_val)))
-            # Colour-keyed background: everything not drawn by the
-            # zone renderer stays fully transparent, so dragging no
-            # longer drapes the whole screen in a black wash. The
-            # window is also created withdrawn with its alpha already
-            # set -- showing it before the alpha applied used to flash
-            # one full-opacity black frame at the start of a drag.
-            ov.configure(bg="#ff00ff")
-            ov.attributes("-transparentcolor", "#ff00ff")
+            ov.configure(bg="#090a0f")
+            ov.update_idletasks()
             h_ov = user32.GetParent(ov.winfo_id()) or ov.winfo_id()
             user32.SetWindowLongW(h_ov, GWL_EXSTYLE, user32.GetWindowLongW(h_ov, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
-            c = tk.Canvas(ov, bg="#ff00ff", highlightthickness=0)
+            c = tk.Canvas(ov, bg="#090a0f", highlightthickness=0)
             c.pack(fill="both", expand=True)
             self.overlay_win, self.overlay_canvas = ov, c
         self.overlay_win.attributes("-alpha", max(0.05, min(0.95, alpha_val)))
@@ -1280,8 +1267,7 @@ class SnapGridManager:
             x2, y2 = int(z[2] * w) - half_gap, int(z[3] * h) - half_gap
             is_sel = idx in selected
             canvas.create_rectangle(x1, y1, x2, y2, fill="#1e293b" if is_sel else "#11131a", outline="#60a5fa" if is_sel else "#334155", width=2)
-            num_size = max(44, min(110, int(min(x2 - x1, y2 - y1) * 0.30)))
-            canvas.create_text((x1 + x2) // 2, (y1 + y2) // 2, text=str(idx + 1), fill="#f8fafc" if is_sel else "#cbd5e1", font=("Segoe UI", num_size, "bold"))
+            canvas.create_text((x1 + x2) // 2, (y1 + y2) // 2, text=str(idx + 1), fill="#e2e8f0" if is_sel else "#64748b", font=("Segoe UI", 22, "bold"))
 
         if len(selected) >= 2:
             merged = self.merge_zone_rects(zones, selected)
@@ -1290,10 +1276,7 @@ class SnapGridManager:
             canvas.create_rectangle(mx1, my1, mx2, my2, fill="#1d4ed8", stipple="gray25", outline="#93c5fd", width=3)
             canvas.create_text((mx1 + mx2) // 2, (my1 + my2) // 2, text=f"MERGE [{' + '.join(str(i + 1) for i in selected)}]", fill="#ffffff", font=("Segoe UI", 20, "bold"))
         elif banner:
-            t_id = canvas.create_text(w // 2, 34, text=banner, fill="#38bdf8", font=("Segoe UI", 14, "bold"))
-            bx1, by1, bx2, by2 = canvas.bbox(t_id)
-            plate = canvas.create_rectangle(bx1 - 10, by1 - 6, bx2 + 10, by2 + 6, fill="#11131a", outline="#334155")
-            canvas.tag_lower(plate, t_id)
+            canvas.create_text(w // 2, 34, text=banner, fill="#38bdf8", font=("Segoe UI", 14, "bold"))
 
     def _sync_coupled_neighbors(self, active_hwnd: int) -> None:
         if not self.resize_start_norm:
@@ -1389,22 +1372,14 @@ class SnapGridManager:
             else:
                 self._hide_overlay()
         else:
-            # A move/size session can look finished for one poll while
-            # the user still holds the mouse button (the foreground /
-            # GUI-thread probe hiccups). Ending the drag then would
-            # yank the window into a zone mid-drag -- the window feels
-            # glued to the zone and fights the mouse. Only a real
-            # release of the button ends a drag.
-            drag_active_held = bool(user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000) and (self.dragging_hwnd is not None or self.resizing_hwnd is not None)
-            if not drag_active_held:
-                self.is_resize_session = False
-                self.resize_start_rect = None
-                self.resize_start_norm = None
-            if self.resizing_hwnd is not None and not drag_active_held:
+            self.is_resize_session = False
+            self.resize_start_rect = None
+            self.resize_start_norm = None
+            if self.resizing_hwnd is not None:
                 self.resizing_hwnd = None
                 self.dragging_hwnd = None
                 self._drag_desk = None
-            elif self.dragging_hwnd is not None and not drag_active_held:
+            elif self.dragging_hwnd is not None:
                 target_hwnd, target_mon, target_sel = self.dragging_hwnd, self.overlay_mon_id, self.selected_indices
                 self.dragging_hwnd = None
                 self._hide_overlay()
@@ -1420,72 +1395,9 @@ class SnapGridManager:
                 self._flash_until_ms = 0
                 self._hide_overlay()
 
-        if cfg.get("snap_restore_last_zone", True) and not in_movesize and self.dragging_hwnd is None and (now_ms - self._last_restore_scan >= 200):
+        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 350):
             self._last_restore_scan = now_ms
             self._scan_and_restore_new_windows()
-
-        if self.dragging_hwnd is None and (now_ms - self._last_rescue_scan >= 500):
-            self._last_rescue_scan = now_ms
-            self._rescue_offscreen_windows()
-
-    def _rescue_offscreen_windows(self) -> None:
-        # Safety net: a window that ended up mostly outside every
-        # monitor's work area -- whoever put it there (an app that
-        # remembered a position from another display setup, a restore
-        # gone wrong) -- is pulled back fully inside the work area it
-        # overlaps most, size preserved where it fits. Only badly
-        # off-screen windows are touched: under 30% visible, or the
-        # title strip unreachable by mouse.
-        try:
-            works = [m["rcWork"] for m in get_all_physical_monitors()]
-        except Exception:
-            return
-        if not works:
-            return
-        own_pid = os.getpid()
-        candidates: List[int] = []
-        enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-
-        def _enum_cb(hwnd: int, _: int) -> bool:
-            if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd) and not user32.IsZoomed(hwnd):
-                ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-                if not (ex_style & WS_EX_TOOLWINDOW) and user32.GetWindowTextLengthW(hwnd) > 0:
-                    candidates.append(hwnd)
-            return True
-
-        user32.EnumWindows(enum_proc(_enum_cb), 0)
-        for hwnd in candidates:
-            try:
-                if hwnd in (self.dragging_hwnd, self.resizing_hwnd):
-                    continue
-                pid = wintypes.DWORD()
-                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if pid.value == own_pid:
-                    continue
-                wr = wintypes.RECT()
-                if not user32.GetWindowRect(hwnd, ctypes.byref(wr)):
-                    continue
-                ww, wh = wr.right - wr.left, wr.bottom - wr.top
-                if ww <= 0 or wh <= 0:
-                    continue
-                best_work, best_area = None, 0
-                for wk in works:
-                    ix = max(0, min(wr.right, wk.right) - max(wr.left, wk.left))
-                    iy = max(0, min(wr.bottom, wk.bottom) - max(wr.top, wk.top))
-                    if ix * iy > best_area:
-                        best_area, best_work = ix * iy, wk
-                title_x = wr.left + min(120, ww // 2)
-                title_ok = any(wk.left <= title_x < wk.right and wk.top <= wr.top + 10 < wk.bottom for wk in works)
-                if best_work is not None and best_area >= 0.30 * ww * wh and title_ok:
-                    continue
-                wk = best_work if best_work is not None else works[0]
-                nw, nh = min(ww, wk.right - wk.left), min(wh, wk.bottom - wk.top)
-                nx = min(max(wr.left, wk.left), wk.right - nw)
-                ny = min(max(wr.top, wk.top), wk.bottom - nh)
-                if (nx, ny, nw, nh) != (wr.left, wr.top, ww, wh):
-                    user32.SetWindowPos(hwnd, 0, nx, ny, nw, nh, SWP_NOACTIVATE)
-            except Exception:
-                continue
 
     def _find_parent_zone_for_child(self, hwnd: int, history: Dict[str, Dict[str, Any]]) -> Optional[Tuple[int, List[float]]]:
         owner_hwnd = user32.GetWindow(hwnd, GW_OWNER) or user32.GetParent(hwnd)
@@ -1509,102 +1421,34 @@ class SnapGridManager:
         return None
 
     def _restore_window_delayed(self, hwnd: int) -> None:
-        # Windows hidden by the event hook (see listen_window_events)
-        # arrive here invisible; hook_fg is their foreground state
-        # from before the hide. Every exit path below re-shows such
-        # a window -- it must never be left hidden.
-        hook_fg = self._hook_hidden.pop(hwnd, None)
-
-        def _reshow() -> None:
-            if hook_fg is not None and user32.IsWindow(hwnd):
-                user32.ShowWindow(hwnd, 5 if hook_fg else 4)  # SW_SHOW / SW_SHOWNOACTIVATE
-
-        if not user32.IsWindow(hwnd) or user32.IsIconic(hwnd) or (hook_fg is None and not user32.IsWindowVisible(hwnd)):
-            _reshow()
+        if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
             return
         cfg = self.get_cfg()
         if not cfg.get("snap_restore_last_zone", True):
-            _reshow()
-            return
-        # Duplicate guard: a window placed within the last 1500 ms
-        # is not placed again (the event hook and the poll scan can
-        # both hand over the same window).
-        if int(kernel32.GetTickCount64()) - self._restore_guard.get(hwnd, 0) < 1500:
-            _reshow()
             return
         history: Dict[str, Dict[str, Any]] = cfg.get("snap_app_history", {})
 
-        # Decide first whether this window will be placed at all.
         parent_info = self._find_parent_zone_for_child(hwnd, history)
-        rec: Optional[Dict[str, Any]] = None
-        if parent_info is None:
-            exe = get_process_exe_name(hwnd)
-            cand = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
-            if cand and cand.get("norm_rect"):
-                rec = cand
-        if parent_info is None and rec is None:
-            _reshow()
+        if parent_info is not None:
+            parent_h, parent_norm = parent_info
+            _, work = self.get_monitor_context_for_window(parent_h)
+            mw, mh = work.right - work.left, work.bottom - work.top
+            zx, zy = int(work.left + parent_norm[0] * mw), int(work.top + parent_norm[1] * mh)
+            zw, zh = int((parent_norm[2] - parent_norm[0]) * mw), int((parent_norm[3] - parent_norm[1]) * mh)
+            cr = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(cr))
+            cw, ch = max(120, cr.right - cr.left), max(90, cr.bottom - cr.top)
+            fit_w, fit_h = min(cw, max(240, zw - 16)), min(ch, max(180, zh - 16))
+            user32.SetWindowPos(hwnd, 0, zx + max(0, (zw - fit_w) // 2), zy + max(0, (zh - fit_h) // 2), fit_w, fit_h, SWP_NOACTIVATE)
             return
 
-        # Already in place: an app that reopens exactly at its
-        # recorded zone (its own remembered position IS the zone,
-        # because placement put it there last time) must not be
-        # hidden and re-shown -- that cycle reads as a blink/jump.
-        # Target rect computed exactly as apply_bounds_to_window
-        # computes it (spacing + DWM frame padding included).
-        if rec is not None and not user32.IsZoomed(hwnd):
-            _tmon, _work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
-            _mw, _mh = _work.right - _work.left, _work.bottom - _work.top
-            _spacing = int(cfg.get("snap_zone_spacing", 8))
-            _half = _spacing // 2
-            _nr = rec["norm_rect"]
-            _wr, _dr = wintypes.RECT(), wintypes.RECT()
-            user32.GetWindowRect(hwnd, ctypes.byref(_wr))
-            if dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(_dr), ctypes.sizeof(_dr)) == 0:
-                _pl, _pt = max(0, _dr.left - _wr.left), max(0, _dr.top - _wr.top)
-                _pr, _pb = max(0, _wr.right - _dr.right), max(0, _wr.bottom - _dr.bottom)
-            else:
-                _pl = _pt = _pr = _pb = 0
-            _tx = int(_work.left + _nr[0] * _mw) + _half - _pl
-            _ty = int(_work.top + _nr[1] * _mh) + _half - _pt
-            _tw = max(80, int((_nr[2] - _nr[0]) * _mw) - _spacing + _pl + _pr)
-            _th = max(60, int((_nr[3] - _nr[1]) * _mh) - _spacing + _pt + _pb)
-            if (abs(_wr.left - _tx) <= 3 and abs(_wr.top - _ty) <= 3
-                    and abs((_wr.right - _wr.left) - _tw) <= 3 and abs((_wr.bottom - _wr.top) - _th) <= 3):
-                self.active_hwnd_bounds[hwnd] = rec["norm_rect"]
-                _reshow()
-                return
-
-        # Hide-first placement: hide the window before placing it
-        # and show it again inside its zone, so it is never seen at
-        # the app's default position and never seen to jump. (When
-        # the event hook caught the window it is already hidden;
-        # hiding again is a no-op.)
-        self._restore_guard[hwnd] = int(kernel32.GetTickCount64())
-        if len(self._restore_guard) > 512:
-            _cut = self._restore_guard[hwnd] - 10000
-            self._restore_guard = {h: t for h, t in self._restore_guard.items() if t > _cut}
-        was_fg = hook_fg if hook_fg is not None else user32.GetForegroundWindow() == hwnd
-        user32.ShowWindow(hwnd, 0)  # SW_HIDE
-        try:
-            if parent_info is not None:
-                parent_h, parent_norm = parent_info
-                _, work = self.get_monitor_context_for_window(parent_h)
-                mw, mh = work.right - work.left, work.bottom - work.top
-                zx, zy = int(work.left + parent_norm[0] * mw), int(work.top + parent_norm[1] * mh)
-                zw, zh = int((parent_norm[2] - parent_norm[0]) * mw), int((parent_norm[3] - parent_norm[1]) * mh)
-                cr = wintypes.RECT()
-                user32.GetWindowRect(hwnd, ctypes.byref(cr))
-                cw, ch = max(120, cr.right - cr.left), max(90, cr.bottom - cr.top)
-                fit_w, fit_h = min(cw, max(240, zw - 16)), min(ch, max(180, zh - 16))
-                user32.SetWindowPos(hwnd, 0, zx + max(0, (zw - fit_w) // 2), zy + max(0, (zh - fit_h) // 2), fit_w, fit_h, SWP_NOACTIVATE)
-            elif rec is not None:
-                norm_rect = rec.get("norm_rect")
+        exe = get_process_exe_name(hwnd)
+        rec = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
+        if rec:
+            norm_rect = rec.get("norm_rect")
+            if norm_rect:
                 target_mon, work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
                 self.apply_bounds_to_window(hwnd, target_mon, work, norm_rect, str(rec.get("slot", "3")), tuple(rec.get("indices", [0])), False)
-        finally:
-            if user32.IsWindow(hwnd):
-                user32.ShowWindow(hwnd, 5 if was_fg else 4)  # SW_SHOW / SW_SHOWNOACTIVATE
 
     def _scan_and_restore_new_windows(self) -> None:
         visible_now: set[int] = set()
@@ -1623,20 +1467,12 @@ class SnapGridManager:
             return
 
         brand_new_hwnds = [h for h in visible_now if h not in self.seen_hwnds]
-        # Union, never replace: windows on other virtual desktops (and
-        # minimised windows) are absent from visible_now, and evicting
-        # them would make them "brand new" again on the next desktop
-        # switch -- every window then got re-placed and visibly jumped
-        # on every switch. Destroyed windows are pruned instead, so
-        # the set cannot grow without bound.
-        self.seen_hwnds |= visible_now
-        if len(self.seen_hwnds) > 1024:
-            self.seen_hwnds = {h for h in self.seen_hwnds if user32.IsWindow(h)}
+        self.seen_hwnds = visible_now
 
         own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
         for hwnd in brand_new_hwnds:
             if hwnd not in (self.root.winfo_id(), own_root):
-                self.root.after(10, lambda h=hwnd: self._restore_window_delayed(h))
+                self.root.after(220, lambda h=hwnd: self._restore_window_delayed(h))
 
 
 class PureWin32AppBar:
@@ -1863,6 +1699,7 @@ class LehaVortexSuite:
 
         self.running = True
         self.manual_hidden = False
+        self.fullscreen_hidden = False
         self.last_state: Optional[Tuple[Any, ...]] = None
         self.force_redraw = True
         self.pill_hitboxes: List[Tuple[int, int, int, int, int]] = []
@@ -1874,7 +1711,6 @@ class LehaVortexSuite:
         self.is_animating = False
         self._last_sys_check = 0
         self._cached_curr = 1
-        self._bar_mon_id: Optional[str] = None
         self._cached_desktops: Tuple[Tuple[int, str], ...] = ((1, "Desktop 1"),)
 
         self.config = load_config_data()
@@ -1970,6 +1806,21 @@ class LehaVortexSuite:
                 self.quit_app()
         finally:
             user32.DestroyMenu(hmenu)
+
+    def is_foreground_fullscreen(self) -> bool:
+        if not self.config.get("auto_hide_fullscreen", False):
+            return False
+        fg_hwnd = user32.GetForegroundWindow()
+        if not fg_hwnd or fg_hwnd == self.appbar.hwnd:
+            return False
+        class_buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(fg_hwnd, class_buf, 256)
+        if class_buf.value in ("Progman", "WorkerW", "Shell_TrayWnd"):
+            return False
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(fg_hwnd, ctypes.byref(rect)):
+            return False
+        return rect.left <= 0 and rect.top <= 0 and rect.right >= user32.GetSystemMetrics(0) and rect.bottom >= user32.GetSystemMetrics(1)
 
     def start_local_studio_server(self) -> None:
         server = HTTPServer(("127.0.0.1", 0), StudioRequestHandler)
@@ -2229,21 +2080,8 @@ class LehaVortexSuite:
             bbox_l = self.get_cached_bbox(draw, label_str, f_base, fk_base)
             lw = bbox_l[2] - bbox_l[0]
             this_pad = base_pad_x + (active_extra_pad if is_active else 0)
-            # Snap slot badge (digit only): reserve its width inside the
-            # pill so it never covers the label or the window count.
-            slot_txt, b_font, bb_b, bd = "", None, None, 0
-            try:
-                if self._bar_mon_id is None:
-                    self._bar_mon_id = self.snap.get_monitor_context_from_point(mon_left + mon_width // 2, mon_top + 2)[0]
-                slot_txt = str(self.snap.get_active_slot_for_monitor(self._bar_mon_id, d_num))
-                b_font, b_fk = self.resolve_font(max(9, int(10 * scale)), False)
-                bb_b = self.get_cached_bbox(draw, slot_txt, b_font, b_fk)
-                bd = max(int(17 * scale), (bb_b[2] - bb_b[0]) + int(7 * scale), (bb_b[3] - bb_b[1]) + int(6 * scale))
-            except Exception:
-                slot_txt, b_font, bb_b, bd = "", None, None, 0
-            badge_w = bd + int(6 * scale) if bd else 0
-            pw = this_pad * 2 + lw + badge_w
-            pills_meta.append({"num": d_num, "label": label_str, "active": is_active, "base_pw": pw, "base_pad": this_pad, "slot_txt": slot_txt, "b_font": b_font, "bb_b": bb_b, "bd": bd, "badge_w": badge_w})
+            pw = this_pad * 2 + lw
+            pills_meta.append({"num": d_num, "label": label_str, "active": is_active, "base_pw": pw, "base_pad": this_pad})
             total_base_w += pw
         if len(pills_meta) > 1:
             total_base_w += pill_gap * (len(pills_meta) - 1)
@@ -2276,7 +2114,7 @@ class LehaVortexSuite:
             bbox_z = self.get_cached_bbox(draw, pm["label"], f_use, fk_use)
             lw_z, lh_z = bbox_z[2] - bbox_z[0], bbox_z[3] - bbox_z[1]
             pad_z = int(round(pm["base_pad"] * new_zoom))
-            pm.update({"font": f_use, "lw": lw_z, "lh": lh_z, "bbox": bbox_z, "pad": pad_z, "pw": pad_z * 2 + lw_z + int(pm["badge_w"] * new_zoom)})
+            pm.update({"font": f_use, "lw": lw_z, "lh": lh_z, "bbox": bbox_z, "pad": pad_z, "pw": pad_z * 2 + lw_z})
 
         self.is_animating = still_animating
         total_pills_width = sum(p["pw"] for p in pills_meta) + (pill_gap * max(0, len(pills_meta) - 1))
@@ -2301,16 +2139,6 @@ class LehaVortexSuite:
                     draw.line([(ix1, iy), (ix1 + ind_w, iy)], fill=fill_accent, width=max(2, int(2.2 * scale)))
             text_x = (x1 + max(int(6 * scale), (pw - pm["lw"]) // 2)) if layout_mode == "stretch" else (x1 + pm["pad"])
             draw.text((text_x, cy - (pm["lh"] // 2) - pm["bbox"][1]), pm["label"], font=pm["font"], fill=fill_fg)
-            # Round badge at the pill's top-right corner: this desktop's
-            # active snap layout slot number (1-6) on the bar monitor.
-            if pm["slot_txt"] and pm["bd"]:
-                bd = pm["bd"]
-                bb_b = pm["bb_b"]
-                tw_b, th_b = bb_b[2] - bb_b[0], bb_b[3] - bb_b[1]
-                bx2 = x2 - int(2 * scale)
-                bx1, by1 = bx2 - bd, pill_top + int(2 * scale)
-                draw.ellipse([bx1, by1, bx2, by1 + bd], fill=fill_accent)
-                draw.text((bx1 + (bd - tw_b) // 2 - bb_b[0], by1 + (bd - th_b) // 2 - bb_b[1]), pm["slot_txt"], font=pm["b_font"], fill=fill_bg if fill_bg is not None else (10, 14, 12, 255))
             new_hitboxes.append((x1, 0, x2, bar_height, pm["num"]))
             cur_x = x2 + pill_gap
 
@@ -2331,6 +2159,16 @@ class LehaVortexSuite:
         is_hovering = self.hover_x is not None or self.is_animating
         if not is_hovering or (now_ms - self._last_sys_check >= 200):
             self._last_sys_check = now_ms
+            is_fs = self.is_foreground_fullscreen()
+            if is_fs and not self.fullscreen_hidden:
+                self.fullscreen_hidden = True
+                self.appbar.hide()
+                return
+            elif not is_fs and self.fullscreen_hidden:
+                self.fullscreen_hidden = False
+                self.force_redraw = True
+            if self.fullscreen_hidden:
+                return
             curr_num, desktops_list = self.get_all_desktops_data()
             self._cached_curr, self._cached_desktops = curr_num, desktops_list
         else:
@@ -2346,7 +2184,7 @@ class LehaVortexSuite:
         # ticks, which at the 8 ms hover redraw rate burned in ~30 ms --
         # long before the cached data caught up -- so the pill blinked
         # back to the old desktop once (the flash the user reported).
-        # v1.2.7 therefore holds the override by time + confirmation,
+        # v1.2.5 therefore holds the override by time + confirmation,
         # not by tick count.
         if self.optimistic_active_num is not None:
             if curr_num == self.optimistic_active_num or now_ms > self.optimistic_until_ms:
@@ -2435,63 +2273,8 @@ class LehaVortexSuite:
         popup.bind("<Escape>", _close)
         popup.after(3000, _close)
 
-    def listen_window_events(self) -> None:
-        """Instant snap restore: a WinEvent hook on EVENT_OBJECT_SHOW
-        catches every new top-level window the moment it appears --
-        the 60 ms poll scan cannot see it sooner, and a window left
-        standing at its spawn position for even ~100 ms reads as a
-        visible jump. The callback does the minimum: for a window
-        with a remembered zone it hides the window AT ONCE (a pure
-        Win32 call, safe on this thread) and hands the placement to
-        the main thread via _post_ui; windows without a remembered
-        zone are not hidden, only handed over for the same decision
-        the poll would make. Known windows (desktop switches,
-        re-shows) are skipped via seen_hwnds -- which is also the
-        loop guard, since our own re-show fires SHOW again but the
-        window is already in the set by then. The poll scan stays
-        as a backstop. Own thread + message loop; no Tk is touched
-        here (threading rule at APP_VERSION)."""
-
-        def _winevent_proc(_hook: Any, event: int, hwnd: int, id_object: int, id_child: int, _tid: int, _time_ms: int) -> None:
-            try:
-                if event != 0x8002 or id_object != 0 or id_child != 0 or not hwnd:  # EVENT_OBJECT_SHOW / OBJID_WINDOW
-                    return
-                snap = self.snap
-                if hwnd in snap.seen_hwnds:
-                    return  # known window (desktop switch, re-show): never re-place
-                if self._ui_queue.qsize() > 50:
-                    return  # flood guard: the 60 ms poll is the backstop
-                cfg = snap.get_cfg()
-                if not cfg.get("snap_restore_last_zone", True):
-                    return
-                history: Dict[str, Any] = cfg.get("snap_app_history", {})
-                candidate = snap._find_parent_zone_for_child(hwnd, history) is not None
-                if not candidate:
-                    exe = get_process_exe_name(hwnd)
-                    if exe:
-                        cand = history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)
-                        candidate = bool(cand and cand.get("norm_rect"))
-                snap.seen_hwnds.add(hwnd)
-                if candidate:
-                    snap._hook_hidden[hwnd] = user32.GetForegroundWindow() == hwnd
-                    user32.ShowWindow(hwnd, 0)  # SW_HIDE before its first frame settles
-                self._post_ui(lambda h=hwnd: snap._restore_window_delayed(h))
-            except Exception:
-                pass
-
-        self._winevent_proc_ref = WINEVENTPROC_TYPE(_winevent_proc)
-        hook = user32.SetWinEventHook(0x8002, 0x8002, None, self._winevent_proc_ref, 0, 0, 0x0001)  # WINEVENT_SKIPOWNPROCESS
-        if not hook:
-            _log_error("winevent-hook", RuntimeError(f"winerror={kernel32.GetLastError()}"))
-            return
-        msg = wintypes.MSG()
-        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-            user32.TranslateMessage(ctypes.byref(msg))
-            user32.DispatchMessageW(ctypes.byref(msg))
-
     def run(self) -> None:
         threading.Thread(target=self.listen_hotkeys, daemon=True).start()
-        threading.Thread(target=self.listen_window_events, daemon=True).start()
         self.root.mainloop()
 
 
