@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.2.9)
+LEHA Vortex Workspace Suite (v1.2.10)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -434,7 +434,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.9"
+APP_VERSION = "v1.2.10"
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -1238,13 +1238,21 @@ class SnapGridManager:
         alpha_val = float(self.get_cfg().get("snap_overlay_opacity", 0.38))
         if self.overlay_win is None or not self.overlay_win.winfo_exists():
             ov = tk.Toplevel(self.root)
+            ov.withdraw()
             ov.overrideredirect(True)
             ov.attributes("-topmost", True)
-            ov.configure(bg="#090a0f")
-            ov.update_idletasks()
+            ov.attributes("-alpha", max(0.05, min(0.95, alpha_val)))
+            # Colour-keyed background: everything not drawn by the
+            # zone renderer stays fully transparent, so dragging no
+            # longer drapes the whole screen in a black wash. The
+            # window is also created withdrawn with its alpha already
+            # set -- showing it before the alpha applied used to flash
+            # one full-opacity black frame at the start of a drag.
+            ov.configure(bg="#ff00ff")
+            ov.attributes("-transparentcolor", "#ff00ff")
             h_ov = user32.GetParent(ov.winfo_id()) or ov.winfo_id()
             user32.SetWindowLongW(h_ov, GWL_EXSTYLE, user32.GetWindowLongW(h_ov, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
-            c = tk.Canvas(ov, bg="#090a0f", highlightthickness=0)
+            c = tk.Canvas(ov, bg="#ff00ff", highlightthickness=0)
             c.pack(fill="both", expand=True)
             self.overlay_win, self.overlay_canvas = ov, c
         self.overlay_win.attributes("-alpha", max(0.05, min(0.95, alpha_val)))
@@ -1282,7 +1290,10 @@ class SnapGridManager:
             canvas.create_rectangle(mx1, my1, mx2, my2, fill="#1d4ed8", stipple="gray25", outline="#93c5fd", width=3)
             canvas.create_text((mx1 + mx2) // 2, (my1 + my2) // 2, text=f"MERGE [{' + '.join(str(i + 1) for i in selected)}]", fill="#ffffff", font=("Segoe UI", 20, "bold"))
         elif banner:
-            canvas.create_text(w // 2, 34, text=banner, fill="#38bdf8", font=("Segoe UI", 14, "bold"))
+            t_id = canvas.create_text(w // 2, 34, text=banner, fill="#38bdf8", font=("Segoe UI", 14, "bold"))
+            bx1, by1, bx2, by2 = canvas.bbox(t_id)
+            plate = canvas.create_rectangle(bx1 - 10, by1 - 6, bx2 + 10, by2 + 6, fill="#11131a", outline="#334155")
+            canvas.tag_lower(plate, t_id)
 
     def _sync_coupled_neighbors(self, active_hwnd: int) -> None:
         if not self.resize_start_norm:
