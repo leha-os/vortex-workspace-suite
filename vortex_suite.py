@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.2.7)
+LEHA Vortex Workspace Suite (v1.2.8)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -434,7 +434,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.7"
+APP_VERSION = "v1.2.8"
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -2146,8 +2146,21 @@ class LehaVortexSuite:
             bbox_l = self.get_cached_bbox(draw, label_str, f_base, fk_base)
             lw = bbox_l[2] - bbox_l[0]
             this_pad = base_pad_x + (active_extra_pad if is_active else 0)
-            pw = this_pad * 2 + lw
-            pills_meta.append({"num": d_num, "label": label_str, "active": is_active, "base_pw": pw, "base_pad": this_pad})
+            # Snap slot badge (digit only): reserve its width inside the
+            # pill so it never covers the label or the window count.
+            slot_txt, b_font, bb_b, bd = "", None, None, 0
+            try:
+                if self._bar_mon_id is None:
+                    self._bar_mon_id = self.snap.get_monitor_context_from_point(mon_left + mon_width // 2, mon_top + 2)[0]
+                slot_txt = str(self.snap.get_active_slot_for_monitor(self._bar_mon_id, d_num))
+                b_font, b_fk = self.resolve_font(max(9, int(10 * scale)), False)
+                bb_b = self.get_cached_bbox(draw, slot_txt, b_font, b_fk)
+                bd = max(int(17 * scale), (bb_b[2] - bb_b[0]) + int(7 * scale), (bb_b[3] - bb_b[1]) + int(6 * scale))
+            except Exception:
+                slot_txt, b_font, bb_b, bd = "", None, None, 0
+            badge_w = bd + int(6 * scale) if bd else 0
+            pw = this_pad * 2 + lw + badge_w
+            pills_meta.append({"num": d_num, "label": label_str, "active": is_active, "base_pw": pw, "base_pad": this_pad, "slot_txt": slot_txt, "b_font": b_font, "bb_b": bb_b, "bd": bd, "badge_w": badge_w})
             total_base_w += pw
         if len(pills_meta) > 1:
             total_base_w += pill_gap * (len(pills_meta) - 1)
@@ -2180,7 +2193,7 @@ class LehaVortexSuite:
             bbox_z = self.get_cached_bbox(draw, pm["label"], f_use, fk_use)
             lw_z, lh_z = bbox_z[2] - bbox_z[0], bbox_z[3] - bbox_z[1]
             pad_z = int(round(pm["base_pad"] * new_zoom))
-            pm.update({"font": f_use, "lw": lw_z, "lh": lh_z, "bbox": bbox_z, "pad": pad_z, "pw": pad_z * 2 + lw_z})
+            pm.update({"font": f_use, "lw": lw_z, "lh": lh_z, "bbox": bbox_z, "pad": pad_z, "pw": pad_z * 2 + lw_z + int(pm["badge_w"] * new_zoom)})
 
         self.is_animating = still_animating
         total_pills_width = sum(p["pw"] for p in pills_meta) + (pill_gap * max(0, len(pills_meta) - 1))
@@ -2205,24 +2218,16 @@ class LehaVortexSuite:
                     draw.line([(ix1, iy), (ix1 + ind_w, iy)], fill=fill_accent, width=max(2, int(2.2 * scale)))
             text_x = (x1 + max(int(6 * scale), (pw - pm["lw"]) // 2)) if layout_mode == "stretch" else (x1 + pm["pad"])
             draw.text((text_x, cy - (pm["lh"] // 2) - pm["bbox"][1]), pm["label"], font=pm["font"], fill=fill_fg)
-            # Round badge at the pill's top-right corner naming this
-            # desktop's active snap layout slot (F1-F6) on the bar monitor.
-            slot_txt = ""
-            try:
-                if self._bar_mon_id is None:
-                    self._bar_mon_id = self.snap.get_monitor_context_from_point(mon_left + mon_width // 2, mon_top + 2)[0]
-                slot_txt = "F" + str(self.snap.get_active_slot_for_monitor(self._bar_mon_id, pm["num"]))
-            except Exception:
-                slot_txt = ""
-            if slot_txt:
-                b_font, _bfk = self.resolve_font(max(7, int(8 * scale)), False)
-                bb_b = draw.textbbox((0, 0), slot_txt, font=b_font)
+            # Round badge at the pill's top-right corner: this desktop's
+            # active snap layout slot number (1-6) on the bar monitor.
+            if pm["slot_txt"] and pm["bd"]:
+                bd = pm["bd"]
+                bb_b = pm["bb_b"]
                 tw_b, th_b = bb_b[2] - bb_b[0], bb_b[3] - bb_b[1]
-                bd = max(int(13 * scale), tw_b + int(6 * scale), th_b + int(5 * scale))
                 bx2 = x2 - int(2 * scale)
                 bx1, by1 = bx2 - bd, pill_top + int(2 * scale)
                 draw.ellipse([bx1, by1, bx2, by1 + bd], fill=fill_accent)
-                draw.text((bx1 + (bd - tw_b) // 2 - bb_b[0], by1 + (bd - th_b) // 2 - bb_b[1]), slot_txt, font=b_font, fill=fill_bg if fill_bg is not None else (10, 14, 12, 255))
+                draw.text((bx1 + (bd - tw_b) // 2 - bb_b[0], by1 + (bd - th_b) // 2 - bb_b[1]), pm["slot_txt"], font=pm["b_font"], fill=fill_bg if fill_bg is not None else (10, 14, 12, 255))
             new_hitboxes.append((x1, 0, x2, bar_height, pm["num"]))
             cur_x = x2 + pill_gap
 
