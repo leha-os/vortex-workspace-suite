@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.2.5)
+LEHA Vortex Workspace Suite (v1.2.6)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -437,7 +437,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.5"
+APP_VERSION = "v1.2.6"
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -1772,6 +1772,7 @@ class LehaVortexSuite:
         self.studio_port = 0
         self.hover_x: Optional[int] = None
         self.hover_scales: Dict[int, float] = {}
+        self._hover_leave_after_id: Optional[str] = None
         self.is_animating = False
         self._last_sys_check = 0
         self._cached_curr = 1
@@ -1824,6 +1825,7 @@ class LehaVortexSuite:
 
     # --- AppBar actions (main thread, via the UI queue) -----------------
     def _bar_hover_main(self, x: int) -> None:
+        self._cancel_pending_hover_clear()
         if self.config.get("hover_zoom", False):
             was_idle = self.hover_x is None and not self.is_animating
             self.hover_x = x
@@ -1831,9 +1833,64 @@ class LehaVortexSuite:
                 self.tick_now()
 
     def _bar_leave_main(self) -> None:
-        if self.hover_x is not None:
-            self.hover_x = None
+        self._schedule_hover_clear()
+
+    def _cancel_pending_hover_clear(self) -> None:
+        after_id = getattr(self, "_hover_leave_after_id", None)
+        if after_id is not None:
+            self._hover_leave_after_id = None
+            try:
+                self.root.after_cancel(after_id)
+            except Exception:
+                pass
+
+    def _schedule_hover_clear(self) -> None:
+        # Grace period: the bar is a layered window with a (near-)
+        # transparent background, so Windows may report MOUSELEAVE
+        # when the cursor crosses a transparent gap between pills
+        # (alpha hit-testing) even though it never left the bar.
+        # Clearing hover_x at once makes the zoom flicker and never
+        # visibly grow while brushing across the text -- hold the
+        # last hover position briefly instead.
+        if self.hover_x is None or getattr(self, "_hover_leave_after_id", None) is not None:
+            return
+        try:
+            self._hover_leave_after_id = self.root.after(250, self._clear_hover_after_leave)
+        except Exception:
+            self._hover_leave_after_id = None
+
+    def _clear_hover_after_leave(self) -> None:
+        self._hover_leave_after_id = None
+        if self.hover_x is None:
+            return
+        self.hover_x = None
+        try:
             self.tick_now()
+        except Exception:
+            pass
+
+    def _sample_hover_from_cursor(self) -> None:
+        # Geometry hover fallback, run every tick (6 ms): read the
+        # cursor position directly and test it against the bar window
+        # rect. This does not depend on WM_MOUSEMOVE delivery, so the
+        # zoom also works when Windows skips mouse messages over the
+        # bar's transparent gaps. When the cursor is outside the bar,
+        # the grace timer clears the hover instead of dropping it.
+        try:
+            pt = POINT()
+            if not user32.GetCursorPos(ctypes.byref(pt)):
+                return
+            rect = wintypes.RECT()
+            if not user32.GetWindowRect(self.appbar.hwnd, ctypes.byref(rect)):
+                return
+            if rect.top <= pt.y < rect.bottom and rect.left <= pt.x < rect.right:
+                self._cancel_pending_hover_clear()
+                if self.config.get("hover_zoom", False):
+                    self.hover_x = pt.x - rect.left
+            else:
+                self._schedule_hover_clear()
+        except Exception:
+            pass
 
     def _bar_click_main(self, x: int, y: int) -> None:
         for x1, y1, x2, y2, target_num in self.pill_hitboxes:
@@ -2186,7 +2243,7 @@ class LehaVortexSuite:
                 dist = abs(self.hover_x - est_cx)
                 radius = float(cfg.get("hover_radius", 90)) * scale
                 if dist < radius:
-                    target_zoom = 1.0 + (float(cfg.get("max_zoom", 1.45)) - 1.0) * (0.5 * (1.0 + math.cos(math.pi * dist / radius)))
+                    target_zoom = 1.0 + (float(cfg.get("max_zoom", 1.30)) - 1.0) * (0.5 * (1.0 + math.cos(math.pi * dist / radius)))
             cur_zoom = self.hover_scales.get(d_num, 1.0)
             new_zoom = cur_zoom + (target_zoom - cur_zoom) * float(cfg.get("smoothness", 0.35))
             if abs(target_zoom - new_zoom) < 0.002:
@@ -2279,6 +2336,7 @@ class LehaVortexSuite:
             else:
                 curr_num = self.optimistic_active_num
 
+        self._sample_hover_from_cursor()
         mon_left, mon_top, mon_width, scale = self.get_primary_monitor_info()
         current_state = (curr_num, desktops_list, mon_left, mon_top, mon_width, scale, self.hover_x, self._config_str)
         if current_state != self.last_state or self.force_redraw or self.is_animating:

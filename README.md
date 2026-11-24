@@ -1,4 +1,4 @@
-# LEHA Vortex Workspace Suite (v1.2.5)
+# LEHA Vortex Workspace Suite (v1.2.6)
 
 Personal project by Le Ha
 
