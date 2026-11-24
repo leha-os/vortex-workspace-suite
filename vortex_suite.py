@@ -896,13 +896,13 @@ def get_explorer_target_folder() -> str:
         shell = win32com.client.Dispatch("Shell.Application")
         windows = list(shell.Windows())
 
-        # 1. Ưu tiên cửa sổ/tab Explorer ngay dưới con trỏ chuột (kể cả khi chưa click focus)
+        # 1. Prefer the Explorer window/tab directly under the cursor (even before it is clicked/focused)
         pt = POINT()
         user32.GetCursorPos(ctypes.byref(pt))
         hwnd_pt = user32.WindowFromPoint(pt)
         root_pt = user32.GetAncestor(hwnd_pt, 2) or hwnd_pt
 
-        # 2. Cửa sổ đang active (foreground)
+        # 2. The active (foreground) window
         fg_hwnd = user32.GetForegroundWindow()
         root_fg = user32.GetAncestor(fg_hwnd, 2) or fg_hwnd
 
@@ -920,7 +920,7 @@ def get_explorer_target_folder() -> str:
                 except Exception:
                     continue
 
-        # 3. Nếu đang đứng ở Explorer nhưng khác handle tab, lấy cửa sổ Explorer đang nổi trên cùng
+        # 3. If inside Explorer but on a different tab handle, take the topmost Explorer window
         cls_buf = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(root_pt, cls_buf, 64)
         fg_cls = ctypes.create_unicode_buffer(64)

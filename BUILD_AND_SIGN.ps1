@@ -6,7 +6,7 @@ Set-Location -LiteralPath $dir
 Get-Process | Where-Object { $_.ProcessName -match "^python|LEHA Vortex" } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 
-# Đảm bảo PyInstaller sẵn sàng
+# Ensure PyInstaller is available
 $ErrorActionPreference = "Continue"
 cmd /c "python -m PyInstaller --version >nul 2>&1"
 if ($LASTEXITCODE -ne 0) {
@@ -14,7 +14,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 $ErrorActionPreference = "Stop"
 
-# Đóng gói One-File Windows Executable kèm studio_ui.html & app_icon.ico
+# Package a one-file Windows executable including studio_ui.html & app_icon.ico
 python -m PyInstaller --noconfirm --clean --onefile --windowed `
     --name "LEHA Vortex Workspace Suite" `
     --icon "app_icon.ico" `
@@ -30,17 +30,17 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed `
 
 $exePath = Join-Path $dir "dist\LEHA Vortex Workspace Suite.exe"
 if (-not (Test-Path -LiteralPath $exePath)) {
-    throw "Không tìm thấy tệp thực thi sau khi biên dịch!"
+    throw "Executable not found after build!"
 }
 
-# Ký chữ ký số Authenticode (CN=Le Ha)
+# Authenticode code signing (CN=Le Ha)
 $certSubject = "CN=Le Ha, O=LEHA Studio, C=VN"
 $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -eq $certSubject } | Select-Object -First 1
 if (-not $cert) {
     $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $certSubject -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5)
 }
 
-# Cài chứng chỉ vào Trusted Root & Trusted Publishers của CurrentUser để Windows xác thực Valid
+# Install the certificate into CurrentUser Trusted Root & Trusted Publishers so Windows validates it
 foreach ($storeName in @("Root", "TrustedPublisher")) {
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName, "CurrentUser")
     $store.Open("ReadWrite")
@@ -52,10 +52,10 @@ foreach ($storeName in @("Root", "TrustedPublisher")) {
 
 $sig = Set-AuthenticodeSignature -FilePath $exePath -Certificate $cert -HashAlgorithm SHA256
 if ($sig.Status -ne "Valid") {
-    throw "Ký chữ ký số thất bại: $($sig.StatusMessage)"
+    throw "Code signing failed: $($sig.StatusMessage)"
 }
 
-# Xuất bản phát hành sạch ra Desktop (Portable Release ZIP & Source Backup ZIP)
+# Publish a clean release to the Desktop (Portable Release ZIP & Source Backup ZIP)
 $releaseDir = Join-Path $dir "dist\LEHA_Vortex_Workspace_Suite_v1.2.5_Signed"
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 Copy-Item -LiteralPath $exePath -Destination $releaseDir -Force
@@ -77,10 +77,10 @@ Compress-Archive -Path @(
     (Join-Path $dir "README.md")
 ) -DestinationPath $srcZip -CompressionLevel Optimal
 
-# Dọn dẹp thư mục build tạm của PyInstaller giữ thư mục gốc sạch sẽ
+# Clean up PyInstaller's temporary build folders to keep the source folder tidy
 Remove-Item -LiteralPath (Join-Path $dir "build"), (Join-Path $dir "dist"), (Join-Path $dir "LEHA Vortex Workspace Suite.spec") -Recurse -Force -ErrorAction SilentlyContinue
 
-# Khởi chạy bản mới nhất
+# Launch the latest build
 # Handled by installed executable
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "BUILD & CODE SIGNING COMPLETED SUCCESSFULLY (CN=Le Ha)" -ForegroundColor Green
