@@ -1,4 +1,4 @@
-# LEHA Vortex Workspace Suite (v1.2.6)
+# LEHA Vortex Workspace Suite (v1.2.7)
 
 Personal project by Le Ha
 
@@ -9,7 +9,7 @@ Personal project by Le Ha
 
 | Shortcut | Action |
 | :--- | :--- |
-| **`F1` .. `F6`** | Switch active FancyZones layout profile for the current virtual desktop on the monitor under the cursor (each virtual desktop keeps its own layout per monitor) |
+| **Custom slot hotkeys** (default `F1` .. `F6`) | Switch active FancyZones layout profile for the current virtual desktop on the monitor under the cursor (each virtual desktop keeps its own layout per monitor). Assign any key in Studio (Ctrl+Alt+1 .. Ctrl+Alt+6) — FancyZones tab → Layout Slot Hotkeys. Bare F1-F12 work alone; letters/digits need Ctrl, Alt or Shift |
 | **`F9` / `F10`** | Open PowerShell (Standard / Administrator) at active or hovered Explorer folder |
 | **`Alt + T`** | Toggle Always On Top + DWM-accurate Border Highlight |
 | **`Alt + Shift + Up / Down`** | Increase / Decrease active window opacity (`20%` – `100%`) |

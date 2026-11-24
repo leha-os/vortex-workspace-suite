@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.2.6)
+LEHA Vortex Workspace Suite (v1.2.7)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -437,7 +437,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.6"
+APP_VERSION = "v1.2.7"
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -474,7 +474,7 @@ HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
 SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0002, 0x0001, 0x0010, 0x0040
 ULW_ALPHA, AC_SRC_OVER, AC_SRC_ALPHA = 0x00000002, 0x00, 0x01
 SW_RESTORE, DWMWA_EXTENDED_FRAME_BOUNDS, DWMWA_CLOAKED, GW_OWNER = 9, 9, 14, 4
-VK_LBUTTON, VK_SHIFT, VK_F1 = 0x01, 0x10, 0x70
+VK_LBUTTON, VK_SHIFT = 0x01, 0x10
 VK_UP, VK_DOWN, VK_G, VK_R = 0x26, 0x28, 0x47, 0x52
 WM_LBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEMOVE, WM_MOUSELEAVE, WM_NCHITTEST = 0x0201, 0x0205, 0x0200, 0x02A3, 0x0084
 TME_LEAVE = 0x00000002
@@ -762,6 +762,65 @@ def default_snap_layouts() -> Dict[str, Dict[str, Any]]:
     }
 
 
+_FKEY_VKS = {f"F{i}": 0x6F + i for i in range(1, 13)}
+
+
+def parse_hotkey(spec: Any) -> Optional[Tuple[int, bool, bool, bool]]:
+    """Parse a free-form hotkey like 'Ctrl+7' or 'Alt+Q' into
+    (vk, ctrl, alt, shift). Returns None for anything unusable
+    (modifier-only, Win combos, unknown keys)."""
+    if not isinstance(spec, str):
+        return None
+    parts = [p.strip() for p in spec.split("+") if p.strip()]
+    if not parts:
+        return None
+    ctrl = alt = shift = False
+    main = None
+    for p in parts:
+        lp = p.lower()
+        if lp in ("ctrl", "control"):
+            ctrl = True
+        elif lp == "alt":
+            alt = True
+        elif lp == "shift":
+            shift = True
+        elif main is None:
+            main = p
+        else:
+            return None
+    if main is None:
+        return None
+    mu = main.upper()
+    if mu in _FKEY_VKS:
+        vk = _FKEY_VKS[mu]
+    elif mu == "SPACE":
+        vk = 0x20
+    elif len(mu) == 1 and ("0" <= mu <= "9" or "A" <= mu <= "Z"):
+        vk = ord(mu)
+    else:
+        return None
+    # Safety: a bare letter/digit/space would swallow normal typing
+    # everywhere, so only bare F-keys are allowed without a modifier.
+    if not (ctrl or alt or shift) and vk not in _FKEY_VKS.values():
+        return None
+    return (vk, ctrl, alt, shift)
+
+
+def slot_hotkey_table(config: Dict[str, Any]) -> Dict[str, Tuple[int, bool, bool, bool]]:
+    """Slot number -> parsed hotkey. A missing or invalid entry falls
+    back to its default F-key, so an old config keeps working."""
+    raw = config.get("slot_hotkeys")
+    if not isinstance(raw, dict):
+        raw = {}
+    table: Dict[str, Tuple[int, bool, bool, bool]] = {}
+    for slot in ("1", "2", "3", "4", "5", "6"):
+        parsed = parse_hotkey(raw.get(slot))
+        if parsed is None:
+            parsed = (0x6F + int(slot), False, False, False)
+        table[slot] = parsed
+    return table
+
+
 def load_config_data() -> Dict[str, Any]:
     default_cfg: Dict[str, Any] = {
         "studio_theme": "dark",
@@ -798,6 +857,7 @@ def load_config_data() -> Dict[str, Any]:
         "active_border": True,
         "active_pop_padding": 2,
         "hover_zoom": True, "smoothness": 0.45,
+        "slot_hotkeys": {"1": "F1", "2": "F2", "3": "F3", "4": "F4", "5": "F5", "6": "F6"},
         "font_size": 13,
         "font_weight": "bold",
         "font_italic": False,
@@ -2015,6 +2075,12 @@ class LehaVortexSuite:
                     win = _is_down(0x5B) or _is_down(0x5C)
                     mods = self.config.get("modules", {})
 
+                    if not win and mods.get("snap_grid", True):
+                        for slot_str, (svk, sctrl, salt, sshift) in sorted(slot_hotkey_table(self.config).items()):
+                            if (vk, ctrl, alt, shift) == (svk, sctrl, salt, sshift):
+                                self._post_ui(lambda s=slot_str: self.snap.switch_monitor_layout(s))
+                                return 1
+
                     if ctrl and alt and not shift and not win:
                         if vk == 0x48:
                             self._post_ui(self.toggle_visibility)
@@ -2032,10 +2098,6 @@ class LehaVortexSuite:
                             return 1
 
                     if alt and not ctrl and not shift and not win:
-                        if 0x31 <= vk <= 0x36 and mods.get("snap_grid", True):
-                            slot_str = str(vk - 0x30)
-                            self._post_ui(lambda s=slot_str: self.snap.switch_monitor_layout(s))
-                            return 1
                         if mods.get("always_on_top", True):
                             if vk == 0x54:
                                 self._post_ui(self.wtop.toggle_pin)
@@ -2045,10 +2107,6 @@ class LehaVortexSuite:
                                 return 1
 
                     if not ctrl and not alt and not shift and not win:
-                        if VK_F1 <= vk <= (VK_F1 + 5) and mods.get("snap_grid", True):
-                            slot_str = str(vk - VK_F1 + 1)
-                            self._post_ui(lambda s=slot_str: self.snap.switch_monitor_layout(s))
-                            return 1
                         if vk == 0x78 and mods.get("quick_shell", True):
                             threading.Thread(target=launch_powershell, args=(False, self.config.get("shell_use_wt", True)), daemon=True).start()
                             return 1
