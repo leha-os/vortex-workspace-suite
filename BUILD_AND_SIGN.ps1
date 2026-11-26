@@ -1,6 +1,5 @@
 $ErrorActionPreference = "Stop"
 $dir = $PSScriptRoot
-$desktop = [Environment]::GetFolderPath("Desktop")
 Set-Location -LiteralPath $dir
 
 Get-Process | Where-Object { $_.ProcessName -match "^python|LEHA Vortex" } | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -19,6 +18,7 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed `
     --name "LEHA Vortex Workspace Suite" `
     --icon "app_icon.ico" `
     --version-file "version_info.txt" `
+    --manifest "vortex.manifest" `
     --add-data "studio_ui.html;." `
     --add-data "app_icon.ico;." `
     --hidden-import "pyvda" `
@@ -55,15 +55,15 @@ if ($sig.Status -ne "Valid") {
     throw "Code signing failed: $($sig.StatusMessage)"
 }
 
-# Publish a clean release to the Desktop (Portable Release ZIP & Source Backup ZIP)
-$releaseDir = Join-Path $dir "dist\LEHA_Vortex_Workspace_Suite_v1.2.7_Signed"
+# Publish a clean release in the source folder (Portable Release ZIP & Source Backup ZIP)
+$releaseDir = Join-Path $dir "dist\LEHA_Vortex_Workspace_Suite_v1.3.8_Signed"
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 Copy-Item -LiteralPath $exePath -Destination $releaseDir -Force
 Copy-Item -LiteralPath (Join-Path $dir "LICENSE") -Destination $releaseDir -Force -ErrorAction SilentlyContinue
 Copy-Item -LiteralPath (Join-Path $dir "README.md") -Destination $releaseDir -Force -ErrorAction SilentlyContinue
 
-$relZip = Join-Path $desktop "LEHA_Vortex_Workspace_Suite_v1.2.7_Signed.zip"
-$srcZip = Join-Path $desktop "LEHA_Vortex_Workspace_Suite_v1.2.7_Source.zip"
+$relZip = Join-Path $dir "LEHA_Vortex_Workspace_Suite_v1.3.8_Signed.zip"
+$srcZip = Join-Path $dir "LEHA_Vortex_Workspace_Suite_v1.3.8_Source.zip"
 Remove-Item -LiteralPath $relZip, $srcZip -Force -ErrorAction SilentlyContinue
 
 Compress-Archive -Path "$releaseDir\*" -DestinationPath $relZip -CompressionLevel Optimal
@@ -72,6 +72,7 @@ Compress-Archive -Path @(
     (Join-Path $dir "studio_ui.html"),
     (Join-Path $dir "app_icon.ico"),
     (Join-Path $dir "version_info.txt"),
+    (Join-Path $dir "vortex.manifest"),
     (Join-Path $dir "BUILD_AND_SIGN.ps1"),
     (Join-Path $dir "LICENSE"),
     (Join-Path $dir "README.md")

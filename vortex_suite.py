@@ -1,11 +1,11 @@
 """
-LEHA Vortex Workspace Suite (v1.2.7)
+LEHA Vortex Workspace Suite (v1.3.8)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
 - Pure Win32 Layered AppBar (120FPS GDI+ DIBSection, zero-flicker, zero-Tkinter-frame artifacts)
 - Strict 64-bit Win32 ctypes bindings (HMONITOR, HDC, HGDIOBJ, HWND)
-- Independent Per-Monitor Magnetic FancyZones (F1..F6 / Alt+1..6, 2-to-4 zone merge, sticky-edge resize)
+- Independent Per-Monitor Magnetic FancyZones (configurable slot hotkeys, 2-to-4 zone merge, sticky-edge resize)
 - WindowTop Pro (DWM Always-On-Top border with Virtual Desktop cloak detection, live opacity,
   ghost click-through)
 - Context-Aware Quick Shell (F9 / F10)
@@ -35,10 +35,12 @@ import tkinter as tk
 import urllib.parse
 import uuid
 import winreg
+import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageGrab
+from io import BytesIO
 
 # Single-instance guard
 _INSTANCE_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, "LEHA_VORTEX_WORKSPACE_SUITE_V1_MUTEX")
@@ -437,7 +439,175 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.2.7"
+APP_VERSION = "v1.3.8"
+
+HOTKEY_DEFAULTS = {str(i): f"F{i}" for i in range(1, 7)}
+HOTKEY_MODIFIERS = {"CTRL": "ctrl", "CONTROL": "ctrl", "ALT": "alt", "SHIFT": "shift"}
+HOTKEY_KEYS = {"SPACE": 0x20, "PRINTSCREEN": 0x2C, "PRTSC": 0x2C, "PRTSCN": 0x2C, "UP": 0x26, "DOWN": 0x28}
+
+
+def parse_hotkey(value: Any) -> Optional[Tuple[int, bool, bool, bool]]:
+    """Parse a user hotkey into (virtual key, Ctrl, Alt, Shift)."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    parts = [part.strip().upper() for part in value.split("+")]
+    if not parts or any(not part for part in parts) or any(part in ("WIN", "WINDOWS", "META", "CMD") for part in parts):
+        return None
+    modifiers = {"ctrl": False, "alt": False, "shift": False}
+    main_keys: List[int] = []
+    for part in parts:
+        modifier = HOTKEY_MODIFIERS.get(part)
+        if modifier:
+            if modifiers[modifier]:
+                return None
+            modifiers[modifier] = True
+            continue
+        if part.startswith("F") and part[1:].isdigit():
+            number = int(part[1:])
+            vk = 0x6F + number if 1 <= number <= 12 else None
+        elif len(part) == 1 and "A" <= part <= "Z":
+            vk = ord(part)
+        elif len(part) == 1 and "0" <= part <= "9":
+            vk = 0x30 + int(part)
+        else:
+            vk = HOTKEY_KEYS.get(part)
+        if vk is None or main_keys:
+            return None
+        main_keys.append(vk)
+    if len(main_keys) != 1:
+        return None
+    vk = main_keys[0]
+    if not any(modifiers.values()) and not (0x70 <= vk <= 0x7B or vk == 0x2C):
+        return None
+    return vk, modifiers["ctrl"], modifiers["alt"], modifiers["shift"]
+
+
+def normalized_slot_hotkeys(config: Dict[str, Any]) -> Dict[str, Tuple[int, bool, bool, bool]]:
+    """Return safe slot bindings, falling back independently to F1-F6."""
+    raw = config.get("slot_hotkeys", {})
+    raw = raw if isinstance(raw, dict) else {}
+    result: Dict[str, Tuple[int, bool, bool, bool]] = {}
+    for slot, fallback in HOTKEY_DEFAULTS.items():
+        parsed = parse_hotkey(raw.get(slot, fallback))
+        if parsed is None or (not any(parsed[1:]) and not 0x70 <= parsed[0] <= 0x7B):
+            parsed = parse_hotkey(fallback)
+        result[slot] = parsed
+    return result
+
+
+def slot_hotkey_label(config: Dict[str, Any], slot: str) -> str:
+    """Return a safe, canonical label for one slot binding."""
+    slot = str(slot)
+    parsed = normalized_slot_hotkeys(config).get(slot)
+    if parsed is None:
+        return HOTKEY_DEFAULTS.get(slot, "F1")
+    vk, ctrl, alt, shift = parsed
+    if 0x70 <= vk <= 0x7B:
+        key = f"F{vk - 0x6F}"
+    elif 0x41 <= vk <= 0x5A:
+        key = chr(vk)
+    elif 0x30 <= vk <= 0x39:
+        key = chr(vk)
+    else:
+        key = {0x20: "Space", 0x2C: "PrintScreen", 0x26: "Up", 0x28: "Down"}.get(vk, "")
+    modifiers = [name for enabled, name in ((ctrl, "Ctrl"), (alt, "Alt"), (shift, "Shift")) if enabled]
+    return "+".join(modifiers + [key]) if key else HOTKEY_DEFAULTS.get(slot, "F1")
+
+
+def match_slot_hotkey(bindings: Dict[str, Tuple[int, bool, bool, bool]], vk: int, ctrl: bool, alt: bool, shift: bool, win: bool) -> Optional[str]:
+    if win:
+        return None
+    for slot in ("1", "2", "3", "4", "5", "6"):
+        if bindings.get(slot) == (vk, ctrl, alt, shift):
+            return slot
+    return None
+
+
+def hotkey_matches(parsed: Optional[Tuple[int, bool, bool, bool]], vk: int, ctrl: bool, alt: bool, shift: bool) -> bool:
+    return parsed is not None and parsed == (vk, ctrl, alt, shift)
+
+
+SCREENSHOT_DEFAULTS = {"full": "Alt+F6", "region": "Alt+F8", "window": "Alt+F7"}
+
+
+def normalized_screenshot_hotkeys(config: Dict[str, Any]) -> Dict[str, Tuple[int, bool, bool, bool]]:
+    """Return safe screenshot bindings per mode, falling back independently."""
+    result: Dict[str, Tuple[int, bool, bool, bool]] = {}
+    for mode, key, fallback in (("full", "screenshot_hotkey", "Alt+F6"),
+                                ("region", "screenshot_hotkey_region", "Alt+F8"),
+                                ("window", "screenshot_hotkey_window", "Alt+F7")):
+        parsed = parse_hotkey(config.get(key, fallback))
+        if parsed is None:
+            parsed = parse_hotkey(fallback)
+        elif mode == "full":
+            if not any(parsed[1:]) and parsed[0] != 0x2C:
+                parsed = parse_hotkey(fallback)
+        elif not any(parsed[1:]):
+            parsed = parse_hotkey(fallback)
+        result[mode] = parsed
+    return result
+
+
+def normalized_extract_hotkey(config: Dict[str, Any]) -> Tuple[int, bool, bool, bool]:
+    """Return the safe extract binding, falling back to Ctrl+Alt+X."""
+    parsed = parse_hotkey(config.get("extract_hotkey", "Ctrl+Alt+X"))
+    if parsed is None or not any(parsed[1:]):
+        parsed = parse_hotkey("Ctrl+Alt+X")
+    return parsed
+
+
+ARCHIVE_EXTS = (".zip", ".rar", ".7z")
+
+
+def extract_dest_for(path: str) -> str:
+    """Same-name folder next to the archive (WinRAR 'Extract to ...' style)."""
+    return os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0])
+
+
+def find_winrar() -> Optional[str]:
+    for candidate in (r"C:\Program Files\WinRAR\WinRAR.exe", r"C:\Program Files (x86)\WinRAR\WinRAR.exe"):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def get_explorer_selection() -> List[str]:
+    """Return the paths selected in the foreground Explorer window (comtypes)."""
+    try:
+        import comtypes.client
+        hwnd = user32.GetForegroundWindow()
+        shell = comtypes.client.CreateObject("Shell.Application")
+        for win in shell.Windows():
+            try:
+                if win.HWND != hwnd:
+                    continue
+                return [str(item.Path) for item in win.Document.SelectedItems() if getattr(item, "Path", None)]
+            except Exception:
+                continue
+    except Exception as exc:
+        _log_error("extract-selection", exc)
+    return []
+
+
+def normalize_shot_rect(x1: int, y1: int, x2: int, y2: int) -> Tuple[int, int, int, int]:
+    """Normalize a drag rectangle to (left, top, right, bottom), at least 1px."""
+    left, right = (x1, x2) if x1 <= x2 else (x2, x1)
+    top, bottom = (y1, y2) if y1 <= y2 else (y2, y1)
+    return left, top, max(left + 1, right), max(top + 1, bottom)
+
+
+def hover_x_from_geometry(cursor: Tuple[int, int], rect: Tuple[int, int, int, int]) -> Optional[int]:
+    left, top, right, bottom = rect
+    x, y = cursor
+    return x - left if left <= x < right and top <= y < bottom else None
+
+
+def scan_new_handles(visible_now: set[int], seen_ever: set[int], is_window: Callable[[int], bool]) -> List[int]:
+    seen_ever.intersection_update({h for h in seen_ever if is_window(h)})
+    brand_new = sorted(visible_now - seen_ever)
+    seen_ever.update(visible_now)
+    return brand_new
+
 
 # v1.2.2 root-cause fix (23/11/2026, from crash-dump symbolication with
 # the official python.org PDBs): every "random exit" was CPython
@@ -474,7 +644,7 @@ HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
 SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0002, 0x0001, 0x0010, 0x0040
 ULW_ALPHA, AC_SRC_OVER, AC_SRC_ALPHA = 0x00000002, 0x00, 0x01
 SW_RESTORE, DWMWA_EXTENDED_FRAME_BOUNDS, DWMWA_CLOAKED, GW_OWNER = 9, 9, 14, 4
-VK_LBUTTON, VK_SHIFT = 0x01, 0x10
+VK_LBUTTON, VK_SHIFT, VK_F1 = 0x01, 0x10, 0x70
 VK_UP, VK_DOWN, VK_G, VK_R = 0x26, 0x28, 0x47, 0x52
 WM_LBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEMOVE, WM_MOUSELEAVE, WM_NCHITTEST = 0x0201, 0x0205, 0x0200, 0x02A3, 0x0084
 TME_LEAVE = 0x00000002
@@ -698,6 +868,12 @@ def hex_to_rgba(hex_str: str, alpha: int = 255) -> Tuple[int, int, int, int]:
     return (int(cleaned[0:2], 16), int(cleaned[2:4], 16), int(cleaned[4:6], 16), alpha)
 
 
+def blend_rgba(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int], t: float) -> Tuple[int, int, int, int]:
+    """Linear blend between two RGBA colors; t=0 returns a, t=1 returns b."""
+    t = max(0.0, min(1.0, t))
+    return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(4))
+
+
 def get_app_dir() -> str:
     return os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
 
@@ -762,76 +938,22 @@ def default_snap_layouts() -> Dict[str, Dict[str, Any]]:
     }
 
 
-_FKEY_VKS = {f"F{i}": 0x6F + i for i in range(1, 13)}
-
-
-def parse_hotkey(spec: Any) -> Optional[Tuple[int, bool, bool, bool]]:
-    """Parse a free-form hotkey like 'Ctrl+7' or 'Alt+Q' into
-    (vk, ctrl, alt, shift). Returns None for anything unusable
-    (modifier-only, Win combos, unknown keys)."""
-    if not isinstance(spec, str):
-        return None
-    parts = [p.strip() for p in spec.split("+") if p.strip()]
-    if not parts:
-        return None
-    ctrl = alt = shift = False
-    main = None
-    for p in parts:
-        lp = p.lower()
-        if lp in ("ctrl", "control"):
-            ctrl = True
-        elif lp == "alt":
-            alt = True
-        elif lp == "shift":
-            shift = True
-        elif main is None:
-            main = p
-        else:
-            return None
-    if main is None:
-        return None
-    mu = main.upper()
-    if mu in _FKEY_VKS:
-        vk = _FKEY_VKS[mu]
-    elif mu == "SPACE":
-        vk = 0x20
-    elif len(mu) == 1 and ("0" <= mu <= "9" or "A" <= mu <= "Z"):
-        vk = ord(mu)
-    else:
-        return None
-    # Safety: a bare letter/digit/space would swallow normal typing
-    # everywhere, so only bare F-keys are allowed without a modifier.
-    if not (ctrl or alt or shift) and vk not in _FKEY_VKS.values():
-        return None
-    return (vk, ctrl, alt, shift)
-
-
-def slot_hotkey_table(config: Dict[str, Any]) -> Dict[str, Tuple[int, bool, bool, bool]]:
-    """Slot number -> parsed hotkey. A missing or invalid entry falls
-    back to its default F-key, so an old config keeps working."""
-    raw = config.get("slot_hotkeys")
-    if not isinstance(raw, dict):
-        raw = {}
-    table: Dict[str, Tuple[int, bool, bool, bool]] = {}
-    for slot in ("1", "2", "3", "4", "5", "6"):
-        parsed = parse_hotkey(raw.get(slot))
-        if parsed is None:
-            parsed = (0x6F + int(slot), False, False, False)
-        table[slot] = parsed
-    return table
-
-
 def load_config_data() -> Dict[str, Any]:
     default_cfg: Dict[str, Any] = {
         "studio_theme": "dark",
         "studio_lang": "vi",
-        "modules": {"desktop_bar": True, "quick_shell": True, "always_on_top": True, "snap_grid": True},
+        "modules": {"desktop_bar": True, "quick_shell": True, "always_on_top": True, "snap_grid": True, "screenshot": True, "extract": True},
         "shell_use_wt": True,
         "aot_border_color": "#ffffff",
         "aot_border_width": 3,
         "ghost_opacity": 0.45,
         "snap_active_slot": "3",
         "snap_monitor_active_slots": {},
+        "slot_hotkeys": {str(i): f"F{i}" for i in range(1, 7)},
+        "screenshot_hotkey": "Alt+F6",
+        "screenshot_hotkey_region": "Alt+F8",
+        "screenshot_hotkey_window": "Alt+F7",
+        "extract_hotkey": "Ctrl+Alt+X",
         "snap_drag_overlay": True,
         "snap_coupled_resize": True,
         "snap_require_shift": False,
@@ -851,13 +973,14 @@ def load_config_data() -> Dict[str, Any]:
         "mono_active_bg": "#0284c7",
         "mono_active_text": "#ffffff",
         "mono_accent": "#38bdf8",
+        "hover_bg": "#F59E0B",
+        "hover_text": "#FFFFFF",
         "multi_pills": {str(i + 1): LUXURY_MULTI_PALETTE[i % len(LUXURY_MULTI_PALETTE)].copy() for i in range(12)},
         "idle_has_bg": True,
         "active_underline": False,
         "active_border": True,
         "active_pop_padding": 2,
         "hover_zoom": True, "smoothness": 0.45,
-        "slot_hotkeys": {"1": "F1", "2": "F2", "3": "F3", "4": "F4", "5": "F5", "6": "F6"},
         "font_size": 13,
         "font_weight": "bold",
         "font_italic": False,
@@ -868,7 +991,6 @@ def load_config_data() -> Dict[str, Any]:
         "pill_radius": 9,
         "height": 28,
         "opacity": 0.94,
-        "auto_hide_fullscreen": False,
     }
     p = get_config_path()
     if os.path.exists(p):
@@ -879,6 +1001,32 @@ def load_config_data() -> Dict[str, Any]:
                     default_cfg.update(loaded)
         except Exception:
             pass
+    # v1.3.5 hotkey reshuffle: old screenshot defaults move to Alt+F6/F7/F8
+    # and a stored extract key colliding with a screenshot key moves back to
+    # Ctrl+Alt+X. A key the user customized herself is left alone.
+    _shot_mode = {"screenshot_hotkey": "full", "screenshot_hotkey_region": "region", "screenshot_hotkey_window": "window"}
+    _old_shot = {"screenshot_hotkey": "PrintScreen", "screenshot_hotkey_region": "Ctrl+PrintScreen", "screenshot_hotkey_window": "Alt+PrintScreen"}
+    for _key, _old in _old_shot.items():
+        if default_cfg.get(_key) == _old:
+            default_cfg[_key] = SCREENSHOT_DEFAULTS[_shot_mode[_key]]
+    # v1.3.6: a stored screenshot key left over from the clash era can equal
+    # another mode's effective key (e.g. window kept "Alt+F6" while full
+    # moved to "Alt+F6", so Alt+F7 matched nothing). Earlier mode wins:
+    # full, then region, then window. A colliding mode falls back to the
+    # first free new default (its own first), so two modes can never share
+    # a key after this runs.
+    _seen_shot = set()
+    for _key in ("screenshot_hotkey", "screenshot_hotkey_region", "screenshot_hotkey_window"):
+        _val = default_cfg.get(_key)
+        if _val in _seen_shot:
+            for _cand in (SCREENSHOT_DEFAULTS[_shot_mode[_key]], SCREENSHOT_DEFAULTS["full"], SCREENSHOT_DEFAULTS["region"], SCREENSHOT_DEFAULTS["window"]):
+                if _cand not in _seen_shot:
+                    _val = _cand
+                    break
+            default_cfg[_key] = _val
+        _seen_shot.add(_val)
+    if default_cfg.get("extract_hotkey") in {default_cfg.get("screenshot_hotkey"), default_cfg.get("screenshot_hotkey_region"), default_cfg.get("screenshot_hotkey_window")}:
+        default_cfg["extract_hotkey"] = "Ctrl+Alt+X"
     default_cfg["autostart"] = is_autostart_enabled()
     return default_cfg
 
@@ -946,14 +1094,14 @@ def enumerate_monitors() -> List[Dict[str, str]]:
 def get_explorer_target_folder() -> str:
     com_inited = False
     try:
-        import pythoncom
-        pythoncom.CoInitialize()
+        import comtypes
+        comtypes.CoInitialize()
         com_inited = True
     except Exception:
         pass
     try:
-        import win32com.client
-        shell = win32com.client.Dispatch("Shell.Application")
+        import comtypes.client
+        shell = comtypes.client.CreateObject("Shell.Application")
         windows = list(shell.Windows())
 
         # 1. Prefer the Explorer window/tab directly under the cursor (even before it is clicked/focused)
@@ -1000,8 +1148,8 @@ def get_explorer_target_folder() -> str:
     finally:
         if com_inited:
             try:
-                import pythoncom
-                pythoncom.CoUninitialize()
+                import comtypes
+                comtypes.CoUninitialize()
             except Exception:
                 pass
     return os.path.expanduser("~")
@@ -1187,6 +1335,8 @@ class SnapGridManager:
         self.resize_start_rect: Optional[wintypes.RECT] = None
         self.resize_start_norm: Optional[List[float]] = None
         self.seen_hwnds: set[int] = set()
+        self.seen_ever: set[int] = set()
+        self._restore_scan_initialized = False
         self.active_hwnd_bounds: Dict[int, List[float]] = {}
         self._last_restore_scan = 0
         self._flash_until_ms = 0
@@ -1324,7 +1474,8 @@ class SnapGridManager:
         zones = self.get_zones_for_monitor(mon_id, str(slot_key), desk_now)
         if not zones:
             return
-        self._render_drag_zones(work, zones, (), banner=f"Desktop {desk_now}  •  {mon_id}  •  Layout F{slot_key} ({len(zones)} Zones)")
+        slot_hotkey = slot_hotkey_label(self.get_cfg(), str(slot_key))
+        self._render_drag_zones(work, zones, (), banner=f"Desktop {desk_now}  •  {mon_id}  •  Layout {slot_hotkey} ({len(zones)} Zones)")
         self._flash_until_ms = int(kernel32.GetTickCount64()) + 280
         self.root.after(285, self._check_flash_expire)
 
@@ -1515,15 +1666,6 @@ class SnapGridManager:
             if owner_exe and owner_exe in history and history[owner_exe].get("norm_rect"):
                 return root_owner, history[owner_exe]["norm_rect"]
 
-        child_pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(child_pid))
-        if child_pid.value:
-            for parent_h, parent_rect in list(self.active_hwnd_bounds.items()):
-                if parent_h != hwnd and user32.IsWindow(parent_h) and user32.IsWindowVisible(parent_h):
-                    p_pid = wintypes.DWORD()
-                    user32.GetWindowThreadProcessId(parent_h, ctypes.byref(p_pid))
-                    if p_pid.value == child_pid.value:
-                        return parent_h, parent_rect
         return None
 
     def _restore_window_delayed(self, hwnd: int) -> None:
@@ -1531,15 +1673,16 @@ class SnapGridManager:
             return
         cls_buf = ctypes.create_unicode_buffer(128)
         user32.GetClassNameW(hwnd, cls_buf, 128)
-        if cls_buf.value in ("#32770", "OperationStatusWindow", "Shell_TrayWnd", "NotifyIconOverflowWindow"):
-            return
+        class_name = cls_buf.value
+        ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        is_dialog = class_name == "#32770" or bool(ex_style & 0x0001)
         cfg = self.get_cfg()
         if not cfg.get("snap_restore_last_zone", True):
             return
         history: Dict[str, Dict[str, Any]] = cfg.get("snap_app_history", {})
 
         parent_info = self._find_parent_zone_for_child(hwnd, history)
-        if parent_info is not None:
+        if parent_info is not None and is_dialog:
             parent_h, parent_norm = parent_info
             _, work = self.get_monitor_context_for_window(parent_h)
             mw, mh = work.right - work.left, work.bottom - work.top
@@ -1552,6 +1695,20 @@ class SnapGridManager:
             user32.SetWindowPos(hwnd, 0, zx + max(0, (zw - fit_w) // 2), zy + max(0, (zh - fit_h) // 2), fit_w, fit_h, SWP_NOACTIVATE)
             return
 
+        if class_name in ("#32770", "OperationStatusWindow", "Shell_TrayWnd", "NotifyIconOverflowWindow"):
+            return
+        if parent_info is not None and not is_dialog:
+            return
+        if parent_info is None and not is_dialog:
+            child_pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(child_pid))
+            if child_pid.value:
+                for sibling_hwnd in tuple(self.active_hwnd_bounds):
+                    if sibling_hwnd != hwnd and user32.IsWindow(sibling_hwnd) and user32.IsWindowVisible(sibling_hwnd):
+                        sibling_pid = wintypes.DWORD()
+                        user32.GetWindowThreadProcessId(sibling_hwnd, ctypes.byref(sibling_pid))
+                        if sibling_pid.value == child_pid.value:
+                            return
         exe = get_process_exe_name(hwnd)
         rec = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
         if rec:
@@ -1561,7 +1718,7 @@ class SnapGridManager:
                 self.apply_bounds_to_window(hwnd, target_mon, work, norm_rect, str(rec.get("slot", "3")), tuple(rec.get("indices", [0])), False)
 
     def restore_single_hwnd_instant(self, hwnd: int) -> None:
-        if not hwnd or hwnd in self.seen_hwnds:
+        if not hwnd or hwnd in self.seen_ever:
             return
         if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
             return
@@ -1572,6 +1729,7 @@ class SnapGridManager:
         if hwnd in (self.root.winfo_id(), own_root):
             return
         self.seen_hwnds.add(hwnd)
+        self.seen_ever.add(hwnd)
         self._restore_window_delayed(hwnd)
 
     def _scan_and_restore_new_windows(self) -> None:
@@ -1586,12 +1744,13 @@ class SnapGridManager:
             return True
 
         user32.EnumWindows(enum_proc(_enum_cb), 0)
-        if not self.seen_hwnds:
-            self.seen_hwnds = visible_now
+        if not self._restore_scan_initialized:
+            self.seen_ever.update(visible_now)
+            self.seen_hwnds = set(self.seen_ever)
+            self._restore_scan_initialized = True
             return
-
-        brand_new_hwnds = [h for h in visible_now if h not in self.seen_hwnds]
-        self.seen_hwnds = visible_now
+        brand_new_hwnds = scan_new_handles(visible_now, self.seen_ever, lambda h: bool(user32.IsWindow(h)))
+        self.seen_hwnds = set(self.seen_ever)
 
         own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
         for hwnd in brand_new_hwnds:
@@ -1789,6 +1948,17 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
             save_config_silent(data)
             if hasattr(self.server, "on_config_saved"):
                 self.server.on_config_saved()
+        elif self.path == "/api/capture":
+            app = getattr(self.server, "app", None)
+            if app is not None:
+                try:
+                    if data.get("active"):
+                        app._capture_suspend_until = time.monotonic() + 15.0
+                    else:
+                        app._capture_suspend_until = 0.0
+                except Exception:
+                    pass
+
         elif self.path == "/api/rename_desktops":
             vd_guids = _vd_guid_list()
             for item in data:
@@ -1823,7 +1993,6 @@ class LehaVortexSuite:
 
         self.running = True
         self.manual_hidden = False
-        self.fullscreen_hidden = False
         self.last_state: Optional[Tuple[Any, ...]] = None
         self.force_redraw = True
         self.pill_hitboxes: List[Tuple[int, int, int, int, int]] = []
@@ -1831,8 +2000,9 @@ class LehaVortexSuite:
         self.optimistic_until_ms = 0
         self.studio_port = 0
         self.hover_x: Optional[int] = None
+        self._hover_clear_after_id: Optional[str] = None
+        self._latest_hover_x: Optional[int] = None
         self.hover_scales: Dict[int, float] = {}
-        self._hover_leave_after_id: Optional[str] = None
         self.is_animating = False
         self._last_sys_check = 0
         self._cached_curr = 1
@@ -1840,6 +2010,12 @@ class LehaVortexSuite:
 
         self.config = load_config_data()
         self._config_str = json.dumps(self.config, sort_keys=True)
+        self._extract_queue: "queue.Queue[Any]" = queue.Queue()
+        self._capture_suspend_until = 0.0
+        self._screenshot_queue: "queue.Queue[Any]" = queue.Queue()
+        self._region_select_open = False
+        threading.Thread(target=self._extract_worker, daemon=True, name="vortex-extract").start()
+        threading.Thread(target=self._screenshot_worker, daemon=True, name="vortex-screenshot").start()
 
         self.wtop = WindowTopProManager(self.root, lambda: self.config)
         self.snap = SnapGridManager(self.root, lambda: self.config)
@@ -1884,8 +2060,26 @@ class LehaVortexSuite:
         self._post_ui(lambda: self.show_native_win32_menu(x_root, y_root))
 
     # --- AppBar actions (main thread, via the UI queue) -----------------
+    def _cancel_hover_clear(self) -> None:
+        after_id = self._hover_clear_after_id
+        self._hover_clear_after_id = None
+        if after_id:
+            try:
+                self.root.after_cancel(after_id)
+            except Exception:
+                pass
+
+    def _clear_bar_hover(self) -> None:
+        self._hover_clear_after_id = None
+        try:
+            if self.hover_x is not None:
+                self.hover_x = None
+                self.tick_now()
+        except Exception:
+            pass
+
     def _bar_hover_main(self, x: int) -> None:
-        self._cancel_pending_hover_clear()
+        self._cancel_hover_clear()
         if self.config.get("hover_zoom", False):
             was_idle = self.hover_x is None and not self.is_animating
             self.hover_x = x
@@ -1893,64 +2087,11 @@ class LehaVortexSuite:
                 self.tick_now()
 
     def _bar_leave_main(self) -> None:
-        self._schedule_hover_clear()
-
-    def _cancel_pending_hover_clear(self) -> None:
-        after_id = getattr(self, "_hover_leave_after_id", None)
-        if after_id is not None:
-            self._hover_leave_after_id = None
+        if self.hover_x is not None and not self._hover_clear_after_id:
             try:
-                self.root.after_cancel(after_id)
+                self._hover_clear_after_id = self.root.after(250, self._clear_bar_hover)
             except Exception:
-                pass
-
-    def _schedule_hover_clear(self) -> None:
-        # Grace period: the bar is a layered window with a (near-)
-        # transparent background, so Windows may report MOUSELEAVE
-        # when the cursor crosses a transparent gap between pills
-        # (alpha hit-testing) even though it never left the bar.
-        # Clearing hover_x at once makes the zoom flicker and never
-        # visibly grow while brushing across the text -- hold the
-        # last hover position briefly instead.
-        if self.hover_x is None or getattr(self, "_hover_leave_after_id", None) is not None:
-            return
-        try:
-            self._hover_leave_after_id = self.root.after(250, self._clear_hover_after_leave)
-        except Exception:
-            self._hover_leave_after_id = None
-
-    def _clear_hover_after_leave(self) -> None:
-        self._hover_leave_after_id = None
-        if self.hover_x is None:
-            return
-        self.hover_x = None
-        try:
-            self.tick_now()
-        except Exception:
-            pass
-
-    def _sample_hover_from_cursor(self) -> None:
-        # Geometry hover fallback, run every tick (6 ms): read the
-        # cursor position directly and test it against the bar window
-        # rect. This does not depend on WM_MOUSEMOVE delivery, so the
-        # zoom also works when Windows skips mouse messages over the
-        # bar's transparent gaps. When the cursor is outside the bar,
-        # the grace timer clears the hover instead of dropping it.
-        try:
-            pt = POINT()
-            if not user32.GetCursorPos(ctypes.byref(pt)):
-                return
-            rect = wintypes.RECT()
-            if not user32.GetWindowRect(self.appbar.hwnd, ctypes.byref(rect)):
-                return
-            if rect.top <= pt.y < rect.bottom and rect.left <= pt.x < rect.right:
-                self._cancel_pending_hover_clear()
-                if self.config.get("hover_zoom", False):
-                    self.hover_x = pt.x - rect.left
-            else:
-                self._schedule_hover_clear()
-        except Exception:
-            pass
+                self._hover_clear_after_id = None
 
     def _bar_click_main(self, x: int, y: int) -> None:
         for x1, y1, x2, y2, target_num in self.pill_hitboxes:
@@ -1998,24 +2139,10 @@ class LehaVortexSuite:
         finally:
             user32.DestroyMenu(hmenu)
 
-    def is_foreground_fullscreen(self) -> bool:
-        if not self.config.get("auto_hide_fullscreen", False):
-            return False
-        fg_hwnd = user32.GetForegroundWindow()
-        if not fg_hwnd or fg_hwnd == self.appbar.hwnd:
-            return False
-        class_buf = ctypes.create_unicode_buffer(256)
-        user32.GetClassNameW(fg_hwnd, class_buf, 256)
-        if class_buf.value in ("Progman", "WorkerW", "Shell_TrayWnd"):
-            return False
-        rect = wintypes.RECT()
-        if not user32.GetWindowRect(fg_hwnd, ctypes.byref(rect)):
-            return False
-        return rect.left <= 0 and rect.top <= 0 and rect.right >= user32.GetSystemMetrics(0) and rect.bottom >= user32.GetSystemMetrics(1)
-
     def start_local_studio_server(self) -> None:
         server = HTTPServer(("127.0.0.1", 0), StudioRequestHandler)
         server.on_config_saved = self.reload_config_immediately  # type: ignore[attr-defined]
+        server.app = self  # type: ignore[attr-defined]
         self.studio_port = server.server_address[1]
         def _serve_with_com() -> None:
             try:
@@ -2025,6 +2152,300 @@ class LehaVortexSuite:
                 pass
             server.serve_forever()
         threading.Thread(target=_serve_with_com, daemon=True).start()
+
+    def _screenshot_worker(self) -> None:
+        while self.running:
+            try:
+                job = self._screenshot_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                if isinstance(job, tuple) and job and job[0] == "bbox":
+                    self._capture_screenshot(bbox=job[1])
+                elif job == "region":
+                    self._post_ui(self._start_region_select)
+                elif job == "window":
+                    self._capture_window_screenshot()
+                else:
+                    self._capture_screenshot()
+            except Exception as exc:
+                _log_error("screenshot", exc)
+
+    def _extract_worker(self) -> None:
+        try:
+            import comtypes
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+        while self.running:
+            try:
+                job = self._extract_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                if job == "extract":
+                    self._extract_archives(get_explorer_selection())
+            except Exception as exc:
+                _log_error("extract", exc)
+
+
+    def _check_shot_size(self, image: Any, expected: Tuple[int, int]) -> None:
+        """Log a size mismatch between the grabbed image and the requested box.
+
+        A grab that comes back smaller than the requested physical box means
+        the capture ran at logical (DPI-virtualized) resolution: the file
+        looks complete but soft when viewed at native size. The entry lands
+        in vortex_error.log under the "screenshot-size" tag.
+        """
+        try:
+            actual = tuple(image.size)
+            if actual != (int(expected[0]), int(expected[1])):
+                _log_error("screenshot-size", RuntimeError(f"grab returned {actual[0]}x{actual[1]}, expected {expected[0]}x{expected[1]}"))
+        except Exception:
+            pass
+
+    def _capture_screenshot(self, bbox: Optional[Tuple[int, int, int, int]] = None) -> None:
+        if bbox is not None:
+            rect = normalize_shot_rect(*bbox)
+            image = ImageGrab.grab(bbox=rect)
+            self._check_shot_size(image, (rect[2] - rect[0], rect[3] - rect[1]))
+            self._save_screenshot(image)
+            return
+        try:
+            pt = POINT()
+            if not user32.GetCursorPos(ctypes.byref(pt)):
+                raise OSError("GetCursorPos failed")
+            hmon = user32.MonitorFromPoint(POINT(pt.x, pt.y), 2)
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if not hmon or not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                raise OSError("GetMonitorInfoW failed")
+            bounds = (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom)
+        except Exception:
+            try:
+                primary = user32.MonitorFromPoint(POINT(0, 0), 1)
+                mi = MONITORINFO()
+                mi.cbSize = ctypes.sizeof(MONITORINFO)
+                if not primary or not user32.GetMonitorInfoW(primary, ctypes.byref(mi)):
+                    raise OSError("Primary monitor lookup failed")
+                bounds = (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom)
+            except Exception:
+                bounds = (0, 0, max(1, user32.GetSystemMetrics(0)), max(1, user32.GetSystemMetrics(1)))
+
+        image = ImageGrab.grab(bbox=bounds)
+        self._check_shot_size(image, (bounds[2] - bounds[0], bounds[3] - bounds[1]))
+        self._save_screenshot(image)
+
+    def _save_screenshot(self, image: Any) -> None:
+        folder = os.path.join(os.path.expanduser("~"), "Pictures", "LEHA Vortex Screenshots")
+        os.makedirs(folder, exist_ok=True)
+        stamp = int(time.time())
+        while True:
+            filename = "vortex-" + time.strftime("%Y%m%d-%H%M%S", time.localtime(stamp)) + ".png"
+            file_path = os.path.join(folder, filename)
+            if not os.path.exists(file_path):
+                break
+            stamp += 1
+        image.save(file_path, format="PNG")
+        bmp = BytesIO()
+        image.convert("RGB").save(bmp, format="BMP")
+        dib = bmp.getvalue()[14:]
+        user32_local, kernel32_local = ctypes.windll.user32, ctypes.windll.kernel32
+        user32_local.OpenClipboard.argtypes = [wintypes.HWND]
+        user32_local.OpenClipboard.restype = wintypes.BOOL
+        user32_local.EmptyClipboard.restype = wintypes.BOOL
+        user32_local.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+        user32_local.SetClipboardData.restype = wintypes.HANDLE
+        kernel32_local.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        kernel32_local.GlobalAlloc.restype = wintypes.HGLOBAL
+        kernel32_local.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32_local.GlobalLock.restype = ctypes.c_void_p
+        kernel32_local.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        kernel32_local.GlobalUnlock.restype = wintypes.BOOL
+        kernel32_local.GlobalFree.argtypes = [wintypes.HGLOBAL]
+        kernel32_local.GlobalFree.restype = wintypes.HGLOBAL
+        if not user32_local.OpenClipboard(None):
+            raise OSError("OpenClipboard failed")
+        handle = None
+        try:
+            if not user32_local.EmptyClipboard():
+                raise OSError("EmptyClipboard failed")
+            handle = kernel32_local.GlobalAlloc(0x0002, len(dib))
+            if not handle:
+                raise OSError("GlobalAlloc failed")
+            pointer = kernel32_local.GlobalLock(handle)
+            if not pointer:
+                raise OSError("GlobalLock failed")
+            ctypes.memmove(pointer, dib, len(dib))
+            kernel32_local.GlobalUnlock(handle)
+            if not user32_local.SetClipboardData(8, handle):
+                raise OSError("SetClipboardData failed")
+            handle = None
+        finally:
+            user32_local.CloseClipboard()
+            if handle:
+                kernel32_local.GlobalFree(handle)
+        self._post_ui(lambda n=filename: self._show_screenshot_toast(n))
+
+    def _capture_window_screenshot(self) -> None:
+        fg = user32.GetForegroundWindow()
+        appbar_hwnd = getattr(getattr(self, "appbar", None), "hwnd", None)
+        if not fg or fg == appbar_hwnd:
+            return
+        rect = wintypes.RECT()
+        if dwmapi.DwmGetWindowAttribute(fg, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)) != 0:
+            if not user32.GetWindowRect(fg, ctypes.byref(rect)):
+                raise OSError("GetWindowRect failed")
+        bounds = (rect.left, rect.top, rect.right, rect.bottom)
+        if bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+            return
+        self._capture_screenshot(bbox=bounds)
+
+    def _start_region_select(self) -> None:
+        if getattr(self, "_region_select_open", False):
+            return
+        try:
+            pt = POINT()
+            if not user32.GetCursorPos(ctypes.byref(pt)):
+                return
+            hmon = user32.MonitorFromPoint(POINT(pt.x, pt.y), 2)
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if not hmon or not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                return
+            bounds = (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom)
+        except Exception as exc:
+            _log_error("screenshot-region", exc)
+            return
+        self._region_select_open = True
+        try:
+            overlay = tk.Toplevel(self.root)
+            overlay.overrideredirect(True)
+            overlay.attributes("-topmost", True)
+            overlay.attributes("-alpha", 0.30)
+            overlay.configure(bg="#000000")
+            overlay.geometry(f"{bounds[2] - bounds[0]}x{bounds[3] - bounds[1]}+{bounds[0]}+{bounds[1]}")
+            canvas = tk.Canvas(overlay, bg="#000000", highlightthickness=0, cursor="crosshair")
+            canvas.pack(fill="both", expand=True)
+            state: Dict[str, Any] = {"x1": None, "y1": None, "rect": None}
+
+            def finish() -> None:
+                self._region_select_open = False
+                try:
+                    overlay.destroy()
+                except Exception:
+                    pass
+
+            def cancel(_event: Any = None) -> None:
+                finish()
+
+            def on_press(event: Any) -> None:
+                state["x1"], state["y1"] = event.x_root, event.y_root
+                if state["rect"] is not None:
+                    canvas.delete(state["rect"])
+                    state["rect"] = None
+
+            def on_drag(event: Any) -> None:
+                if state["x1"] is None:
+                    return
+                if state["rect"] is not None:
+                    canvas.delete(state["rect"])
+                state["rect"] = canvas.create_rectangle(state["x1"] - bounds[0], state["y1"] - bounds[1], event.x_root - bounds[0], event.y_root - bounds[1], outline="#38bdf8", width=2)
+
+            def on_release(event: Any) -> None:
+                if state["x1"] is None:
+                    cancel()
+                    return
+                left, top, right, bottom = normalize_shot_rect(state["x1"], state["y1"], event.x_root, event.y_root)
+                left = max(bounds[0], left)
+                top = max(bounds[1], top)
+                right = min(bounds[2], right)
+                bottom = min(bounds[3], bottom)
+                if right <= left or bottom <= top:
+                    cancel()
+                    return
+                rect = (left, top, right, bottom)
+                try:
+                    overlay.withdraw()
+                except Exception:
+                    pass
+
+                def deliver() -> None:
+                    finish()
+                    self._screenshot_queue.put_nowait(("bbox", rect))
+
+                try:
+                    overlay.after(60, deliver)
+                except Exception:
+                    deliver()
+
+            canvas.bind("<Button-1>", on_press)
+            canvas.bind("<B1-Motion>", on_drag)
+            canvas.bind("<ButtonRelease-1>", on_release)
+            overlay.bind("<Escape>", cancel)
+            overlay.bind("<Button-3>", cancel)
+            self._region_overlay = overlay
+        except Exception as exc:
+            self._region_select_open = False
+            _log_error("screenshot-region", exc)
+
+    def _show_screenshot_toast(self, filename: str) -> None:
+        try:
+            toast = tk.Toplevel(self.root)
+            toast.overrideredirect(True)
+            toast.attributes("-topmost", True)
+            toast.configure(bg="#18181b")
+            tk.Label(toast, text=filename, bg="#18181b", fg="#f4f4f5", padx=14, pady=9, font=("Segoe UI", 9)).pack()
+            toast.update_idletasks()
+            x = max(0, toast.winfo_screenwidth() - toast.winfo_reqwidth() - 24)
+            y = max(0, toast.winfo_screenheight() - toast.winfo_reqheight() - 48)
+            toast.geometry(f"+{x}+{y}")
+            toast.after(1000, toast.destroy)
+        except Exception as exc:
+            _log_error("screenshot-toast", exc)
+
+    def _extract_archives(self, paths: List[str]) -> None:
+        done: List[str] = []
+        for path in paths:
+            try:
+                ext = os.path.splitext(path)[1].lower()
+                if ext not in ARCHIVE_EXTS:
+                    continue
+                dest = extract_dest_for(path)
+                if ext == ".zip":
+                    with zipfile.ZipFile(path) as zf:
+                        zf.extractall(dest)
+                else:
+                    winrar = find_winrar()
+                    if not winrar:
+                        continue
+                    result = subprocess.run([winrar, "x", "-o+", path, dest + "\\"], creationflags=0x08000000, check=False)
+                    if result.returncode != 0:
+                        raise OSError(f"WinRAR exited with code {result.returncode}")
+                done.append(os.path.basename(dest))
+            except Exception as exc:
+                _log_error("extract", exc)
+        if done:
+            self._post_ui(lambda names=done: self._show_extract_toast(names))
+
+    def _show_extract_toast(self, names: List[str]) -> None:
+        try:
+            text = ", ".join(names[:2])
+            if len(names) > 2:
+                text += f" +{len(names) - 2}"
+            toast = tk.Toplevel(self.root)
+            toast.overrideredirect(True)
+            toast.attributes("-topmost", True)
+            toast.configure(bg="#18181b")
+            tk.Label(toast, text=text, bg="#18181b", fg="#f4f4f5", padx=14, pady=9, font=("Segoe UI", 9)).pack()
+            toast.update_idletasks()
+            x = max(0, toast.winfo_screenwidth() - toast.winfo_reqwidth() - 24)
+            y = max(0, toast.winfo_screenheight() - toast.winfo_reqheight() - 48)
+            toast.geometry(f"+{x}+{y}")
+            toast.after(1000, toast.destroy)
+        except Exception as exc:
+            _log_error("extract-toast", exc)
+
 
     def reload_config_immediately(self) -> None:
         def _apply() -> None:
@@ -2069,17 +2490,32 @@ class LehaVortexSuite:
         def _ll_cb(nCode: int, wParam: int, lParam: int) -> int:
             try:
                 if nCode >= 0 and wParam in (0x0100, 0x0104):
+                    if time.monotonic() < getattr(self, "_capture_suspend_until", 0.0):
+                        return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
                     kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                     vk = kb.vkCode
                     ctrl, alt, shift = _is_down(0x11), _is_down(0x12), _is_down(0x10)
                     win = _is_down(0x5B) or _is_down(0x5C)
                     mods = self.config.get("modules", {})
 
-                    if not win and mods.get("snap_grid", True):
-                        for slot_str, (svk, sctrl, salt, sshift) in sorted(slot_hotkey_table(self.config).items()):
-                            if (vk, ctrl, alt, shift) == (svk, sctrl, salt, sshift):
-                                self._post_ui(lambda s=slot_str: self.snap.switch_monitor_layout(s))
+                    slot = match_slot_hotkey(normalized_slot_hotkeys(self.config), vk, ctrl, alt, shift, win)
+                    if slot and mods.get("snap_grid", True):
+                        self._post_ui(lambda s=slot: self.snap.switch_monitor_layout(s))
+                        return 1
+
+                    if not win and mods.get("screenshot", True):
+                        shot_keys = normalized_screenshot_hotkeys(self.config)
+                        for shot_mode in ("full", "region", "window"):
+                            if hotkey_matches(shot_keys.get(shot_mode), vk, ctrl, alt, shift):
+                                self._screenshot_queue.put_nowait(shot_mode)
                                 return 1
+
+                    if not win and mods.get("extract", True):
+                        if hotkey_matches(normalized_extract_hotkey(self.config), vk, ctrl, alt, shift):
+                            self._extract_queue.put_nowait("extract")
+                            return 1
+
 
                     if ctrl and alt and not shift and not win:
                         if vk == 0x48:
@@ -2179,7 +2615,7 @@ class LehaVortexSuite:
         items: List[Tuple[int, str]] = []
         for num, name, _guid in desks:
             cnt = app_counts.get(num, 0)
-            items.append((num, f"{name} ({cnt})" if cnt > 0 else name))
+            items.append((num, f"{name} · {cnt}" if cnt > 0 else name))
         return curr_num, tuple(items)
 
     def open_settings_popup(self) -> None:
@@ -2323,6 +2759,15 @@ class LehaVortexSuite:
         equal_pw = max(int(40 * scale), (avail_width - pill_gap * (len(pills_meta) - 1)) // len(pills_meta)) if (layout_mode == "stretch" and pills_meta) else 0
         cur_x = pad_x if layout_mode != "center" else max(pad_x, (mon_width // 2) - (total_pills_width // 2))
 
+        try:
+            hover_rgba = hex_to_rgba(cfg.get("hover_bg", "#F59E0B") or "#F59E0B", 245)
+        except Exception:
+            hover_rgba = hex_to_rgba("#F59E0B", 245)
+        try:
+            hover_text_rgba = hex_to_rgba(cfg.get("hover_text", "#FFFFFF") or "#FFFFFF", 255)
+        except Exception:
+            hover_text_rgba = hex_to_rgba("#FFFFFF", 255)
+
         new_hitboxes: List[Tuple[int, int, int, int, int]] = []
         for pm in pills_meta:
             pw = equal_pw if layout_mode == "stretch" else pm["pw"]
@@ -2331,6 +2776,17 @@ class LehaVortexSuite:
             pill_top, pill_bottom = 0, bar_height - 1
             x1, x2 = cur_x, cur_x + pw
             fill_bg, fill_fg, fill_accent, fill_outline = self.get_pill_visuals(pm["num"], pm["active"])
+            hover_f = 0.0
+            if cfg.get("hover_zoom", False) and self.hover_x is not None and x1 <= self.hover_x < x2:
+                hover_f = 1.0
+            if hover_f > 0.0:
+                if fill_bg is not None:
+                    fill_bg = blend_rgba(fill_bg, hover_rgba, hover_f)
+                    fill_fg = blend_rgba(fill_fg, hover_text_rgba, hover_f)
+                else:
+                    fill_fg = blend_rgba(fill_fg, hover_rgba, hover_f)
+                if fill_outline is not None:
+                    fill_outline = blend_rgba(fill_outline, hover_rgba, hover_f)
             if fill_bg is not None or fill_outline is not None:
                 draw.rounded_rectangle([x1, pill_top, x2, pill_bottom], radius=pill_radius, fill=fill_bg, outline=fill_outline, width=max(1, int(1.6 * scale)) if pm["active"] else 1)
             if pm["active"] and cfg.get("active_underline", False):
@@ -2347,7 +2803,32 @@ class LehaVortexSuite:
         self.pill_hitboxes = new_hitboxes
         self.appbar.render_frame(img, mon_left, mon_top, float(cfg.get("opacity", 0.94)))
 
+    def _sync_hover_from_geometry(self) -> None:
+        if not self.config.get("hover_zoom", False):
+            self._cancel_hover_clear()
+            if self.hover_x is not None:
+                self.hover_x = None
+            return
+        try:
+            hwnd = self.appbar.hwnd
+            if not hwnd or not user32.IsWindowVisible(hwnd):
+                if self.hover_x is not None and not self._hover_clear_after_id:
+                    self._hover_clear_after_id = self.root.after(250, self._clear_bar_hover)
+                return
+            point, rect = POINT(), wintypes.RECT()
+            if not user32.GetCursorPos(ctypes.byref(point)) or not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            x = hover_x_from_geometry((point.x, point.y), (rect.left, rect.top, rect.right, rect.bottom))
+            if x is not None:
+                self._cancel_hover_clear()
+                self.hover_x = x
+            elif self.hover_x is not None and not self._hover_clear_after_id:
+                self._hover_clear_after_id = self.root.after(250, self._clear_bar_hover)
+        except Exception as exc:
+            _log_error("bar-hover-geometry", exc)
+
     def tick_now(self) -> None:
+        self._sync_hover_from_geometry()
         if self.config.get("modules", {}).get("always_on_top", True):
             self.wtop.sync_borders(bool(self.snap.dragging_hwnd))
         try:
@@ -2361,16 +2842,6 @@ class LehaVortexSuite:
         is_hovering = self.hover_x is not None or self.is_animating
         if not is_hovering or (now_ms - self._last_sys_check >= 45):
             self._last_sys_check = now_ms
-            is_fs = self.is_foreground_fullscreen()
-            if is_fs and not self.fullscreen_hidden:
-                self.fullscreen_hidden = True
-                self.appbar.hide()
-                return
-            elif not is_fs and self.fullscreen_hidden:
-                self.fullscreen_hidden = False
-                self.force_redraw = True
-            if self.fullscreen_hidden:
-                return
             curr_num, desktops_list = self.get_all_desktops_data()
             self._cached_curr, self._cached_desktops = curr_num, desktops_list
         else:
@@ -2394,7 +2865,6 @@ class LehaVortexSuite:
             else:
                 curr_num = self.optimistic_active_num
 
-        self._sample_hover_from_cursor()
         mon_left, mon_top, mon_width, scale = self.get_primary_monitor_info()
         current_state = (curr_num, desktops_list, mon_left, mon_top, mon_width, scale, self.hover_x, self._config_str)
         if current_state != self.last_state or self.force_redraw or self.is_animating:
