@@ -62,8 +62,7 @@
   .swatch{position:relative;width:28px;height:28px;border-radius:8px;border:1px solid var(--border);overflow:hidden;cursor:pointer}
   .swatch input{position:absolute;inset:-6px;width:42px;height:42px;opacity:0;cursor:pointer}
   .hex-lbl{font-family:Consolas,monospace;font-size:11px;color:var(--muted);width:56px}
-  select, .txt-in{background:var(--ctrl-bg);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:10px;font-size:13px;outline:none}
-  .txt-in{width:100%}
+  select{background:var(--ctrl-bg);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:10px;font-size:13px;outline:none}
   .btn-act{background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;transition:0.15s}
   .btn-act:hover{opacity:0.9}
   .btn-sub{background:var(--ctrl-bg);color:var(--text);border:1px solid var(--border);padding:7px 12px;border-radius:10px;font-size:12px;font-weight:500;cursor:pointer}
@@ -82,7 +81,7 @@
 <div class="sidebar">
   <div class="brand">
     <div class="app-icon"><span></span></div>
-    <div><h1>LEHA Vortex Suite</h1><small>v1.3.8 • by Le Ha</small></div>
+    <div><h1>LEHA Vortex Suite</h1><small>v1.3.10 • by Le Ha</small></div>
   </div>
   <div class="nav-btn active" id="nav-overview" onclick="goTab('overview',this)">Modules/Hotkeys</div>
   <div class="nav-btn" id="nav-snap" onclick="goTab('snap',this)">FancyZones</div>
@@ -105,11 +104,10 @@
         <div class="card-hdr" data-i18n="sec_mod">Modules & Integrated Hotkeys</div>
         <div class="row"><div><div class="row-title" data-i18n="m_auto">Launch at Windows Startup</div><div class="row-desc" data-i18n="d_auto">Start background engine upon sign-in</div></div><div class="row-ctrl"><div class="ios-sw" id="sw-autostart" onclick="togOpt('autostart')"></div></div></div>
         <div class="row"><div><div class="row-title" data-i18n="m_bar">Desktop Bar PRO</div><div class="row-desc" data-i18n="d_bar">120FPS top-docked virtual desktop switcher</div></div><div class="row-ctrl"><span class="kbd">Ctrl+Alt+H / Ctrl+Alt+V</span><div class="ios-sw" id="sw-mod-desktop_bar" onclick="togMod('desktop_bar')"></div></div></div>
-        <div class="row"><div><div class="row-title" data-i18n="m_snap">FancyZones (1 to 6 Zones)</div><div class="row-desc" data-i18n="d_snap">F1..F6 or Alt+1..6 per monitor</div></div><div class="row-ctrl"><span class="kbd" id="slot-hotkeys-badge">F1, F2, F3, F4, F5, F6</span><div class="ios-sw" id="sw-mod-snap_grid" onclick="togMod('snap_grid')"></div></div></div>
+        <div class="row"><div><div class="row-title" data-i18n="m_snap">FancyZones (1 to 6 Zones)</div><div class="row-desc" data-i18n="d_snap">Use the assigned hotkey for each layout slot</div></div><div class="row-ctrl"><span class="kbd" id="slot-hotkeys-badge">F1, F2, F3, F4, F5, F6</span><div class="ios-sw" id="sw-mod-snap_grid" onclick="togMod('snap_grid')"></div></div></div>
         <div class="row"><div><div class="row-title" data-i18n="m_wtop">WindowTop Pro (Pin/Opacity/Ghost)</div><div class="row-desc" data-i18n="d_wtop">Pin border, opacity wheel, click-through ghost</div></div><div class="row-ctrl"><span class="kbd">Alt+T/G / Alt+Shift+Up/Down</span><div class="ios-sw" id="sw-mod-always_on_top" onclick="togMod('always_on_top')"></div></div></div>
         <div class="row"><div><div class="row-title" data-i18n="m_sh">Quick Shell Launcher (User/Admin)</div><div class="row-desc" data-i18n="d_sh">Open PowerShell in active/hovered Explorer path</div></div><div class="row-ctrl"><span class="kbd">F9 / F10</span><div class="ios-sw" id="sw-mod-quick_shell" onclick="togMod('quick_shell')"></div></div></div>
         <div class="row"><div><div class="row-title" data-i18n="m_screenshot">Quick Screenshot</div><div class="row-desc" data-i18n="d_screenshot">Save and copy a monitor capture with one shortcut</div></div><div class="row-ctrl"><span class="kbd" id="screenshot-hotkey-badge">Alt+F6</span><div class="ios-sw" id="sw-mod-screenshot" onclick="togMod('screenshot')"></div></div></div>
-        <div class="row"><div><div class="row-title" data-i18n="m_extract">Quick Extract</div><div class="row-desc" data-i18n="d_extract">Extract selected archives to a same-name folder with one shortcut</div></div><div class="row-ctrl"><span class="kbd" id="extract-hotkey-badge">Ctrl+Alt+X</span><div class="ios-sw" id="sw-mod-extract" onclick="togMod('extract')"></div></div></div>
       </div>
     </div>
 
@@ -122,7 +120,6 @@
         <div class="row"><div><div class="row-title" data-i18n="screenshot_hotkey_title">Quick Screenshot</div><div class="row-desc" data-i18n="screenshot_hotkey_desc">Capture the monitor under the pointer and copy it to the clipboard.</div></div><button class="btn-sub hotkey-capture" id="capture-screenshot-hotkey" data-shot="full">Alt+F6</button></div>
         <div class="row"><div><div class="row-title" data-i18n="screenshot_region_title">Region Screenshot</div><div class="row-desc" data-i18n="screenshot_region_desc">Drag to select a rectangle and capture only that area.</div></div><button class="btn-sub hotkey-capture" id="capture-screenshot-region-hotkey" data-shot="region">Alt+F8</button></div>
         <div class="row"><div><div class="row-title" data-i18n="screenshot_window_title">Window Screenshot</div><div class="row-desc" data-i18n="screenshot_window_desc">Capture the active window only.</div></div><button class="btn-sub hotkey-capture" id="capture-screenshot-window-hotkey" data-shot="window">Alt+F7</button></div>
-        <div class="row"><div><div class="row-title" data-i18n="extract_hotkey_title">Quick Extract</div><div class="row-desc" data-i18n="extract_hotkey_desc">Extract the archives selected in Explorer to same-name folders.</div></div><button class="btn-sub hotkey-capture" id="capture-extract-hotkey" data-extract="1">Ctrl+Alt+X</button></div>
         <div class="row-desc" id="hotkey-warning" role="status"></div>
       </div>
       <div class="card">
@@ -137,7 +134,7 @@
       </div>
       <div class="card">
         <div class="row">
-          <div><div class="card-hdr" data-i18n="sec_mon">Per-Desktop & Monitor Layout (F1=1..F6=6)</div><div class="row-desc"><span data-i18n="l_act">Active</span>: <b style="color:var(--accent)" id="lbl-act-slot">F3</b> &nbsp;•&nbsp; <span id="lbl-scope">Desktop 1</span></div></div>
+          <div><div class="card-hdr" data-i18n="sec_mon">Per-Desktop & Monitor Layout</div><div class="row-desc"><span data-i18n="l_act">Active</span>: <b style="color:var(--accent)" id="lbl-act-slot">F3</b> &nbsp;•&nbsp; <span id="lbl-scope">Desktop 1</span></div></div>
           <div style="display:flex;gap:8px;align-items:center">
             <select id="sel-desktop" onchange="renderSnap();cloneAct()"></select>
             <select id="sel-monitor" onchange="renderSnap();cloneAct()"></select>
@@ -193,8 +190,8 @@
         <div class="card-hdr" data-i18n="sec_bd">Dimensions & Typography</div>
         <div class="row"><span class="row-title" data-i18n="l_bh">Bar Height (min 18px)</span><div class="slider-box"><input type="range" id="sl-height" min="18" max="44" step="1" oninput="setSl('height',+this.value,'px')"><span class="badge-val" id="val-height"></span></div></div>
         <div class="row"><span class="row-title" data-i18n="l_fs">Font Size</span><div class="slider-box"><input type="range" id="sl-font_size" min="9" max="20" step="1" oninput="setSl('font_size',+this.value,'px')"><span class="badge-val" id="val-font_size"></span></div></div>
-        <div class="row"><span class="row-title" data-i18n="l_fw">Font Weight/Italic</span><div style="display:flex;gap:8px;align-items:center"><div class="seg" id="seg-font_weight"><div class="seg-item" data-v="light" onclick="setOpt('font_weight','light')">Light</div><div class="seg-item" data-v="regular" onclick="setOpt('font_weight','regular')">Regular</div><div class="seg-item" data-v="bold" onclick="setOpt('font_weight','bold')">Bold</div></div><div class="ios-sw" id="sw-font_italic" onclick="togOpt('font_italic')"></div></div></div>
-        <div class="row"><span class="row-title" data-i18n="l_al">Alignment/Pill Width</span><div style="display:flex;gap:8px"><div class="seg" id="seg-layout_mode"><div class="seg-item" data-v="left" onclick="setOpt('layout_mode','left')">Left</div><div class="seg-item" data-v="center" onclick="setOpt('layout_mode','center')">Center</div><div class="seg-item" data-v="stretch" onclick="setOpt('layout_mode','stretch')">Stretch</div></div><div class="seg" id="seg-pill_size"><div class="seg-item" data-v="compact" onclick="setOpt('pill_size','compact')">Compact</div><div class="seg-item" data-v="normal" onclick="setOpt('pill_size','normal')">Normal</div><div class="seg-item" data-v="wide" onclick="setOpt('pill_size','wide')">Wide</div></div></div></div>
+        <div class="row"><span class="row-title" data-i18n="l_fw">Font Weight/Italic</span><div style="display:flex;gap:8px;align-items:center"><div class="seg" id="seg-font_weight"><div class="seg-item" data-v="light" onclick="setOpt('font_weight','light')" data-i18n="v_light">Light</div><div class="seg-item" data-v="regular" onclick="setOpt('font_weight','regular')" data-i18n="v_regular">Regular</div><div class="seg-item" data-v="bold" onclick="setOpt('font_weight','bold')" data-i18n="v_bold">Bold</div></div><div class="ios-sw" id="sw-font_italic" onclick="togOpt('font_italic')"></div></div></div>
+        <div class="row"><span class="row-title" data-i18n="l_al">Alignment/Pill Width</span><div style="display:flex;gap:8px"><div class="seg" id="seg-layout_mode"><div class="seg-item" data-v="left" onclick="setOpt('layout_mode','left')" data-i18n="v_left">Left</div><div class="seg-item" data-v="center" onclick="setOpt('layout_mode','center')" data-i18n="v_center">Center</div><div class="seg-item" data-v="stretch" onclick="setOpt('layout_mode','stretch')" data-i18n="v_stretch">Stretch</div></div><div class="seg" id="seg-pill_size"><div class="seg-item" data-v="compact" onclick="setOpt('pill_size','compact')" data-i18n="v_compact">Compact</div><div class="seg-item" data-v="normal" onclick="setOpt('pill_size','normal')" data-i18n="v_normal">Normal</div><div class="seg-item" data-v="wide" onclick="setOpt('pill_size','wide')" data-i18n="v_wide">Wide</div></div></div></div>
         <div class="row"><span class="row-title" data-i18n="l_pg">Pill Spacing</span><div class="slider-box"><input type="range" id="sl-pill_gap" min="2" max="60" step="2" oninput="setSl('pill_gap',+this.value,'px')"><span class="badge-val" id="val-pill_gap"></span></div></div>
         <div class="row"><span class="row-title" data-i18n="l_pr">Corner Radius</span><div class="slider-box"><input type="range" id="sl-pill_radius" min="0" max="15" step="1" oninput="setSl('pill_radius',+this.value,'px')"><span class="badge-val" id="val-pill_radius"></span></div></div>
         <div class="row"><span class="row-title" data-i18n="l_po">Pill Opacity</span><div class="slider-box"><input type="range" id="sl-opacity" min="0.05" max="1.0" step="0.05" oninput="setSl('opacity',+this.value,'%')"><span class="badge-val" id="val-opacity"></span></div></div>
@@ -208,7 +205,7 @@
         <div class="row"><span class="row-title" data-i18n="l_hvt">Hover Text Color</span><div class="color-wrap" id="cg-hover_text"></div></div>
         <div class="row"><span class="row-title" data-i18n="l_pp">Active Pill Extra Padding</span><div class="slider-box"><input type="range" id="sl-active_pop_padding" min="0" max="36" step="2" oninput="setSl('active_pop_padding',+this.value,'px')"><span class="badge-val" id="val-active_pop_padding"></span></div></div>
         <div class="row"><span class="row-title" data-i18n="l_id">Idle Pill Fill/Color/Text</span><div style="display:flex;align-items:center;gap:8px"><div class="ios-sw" id="sw-idle_has_bg" onclick="togOpt('idle_has_bg')"></div><div class="color-wrap" id="cg-mono_idle_bg"></div><div class="color-wrap" id="cg-mono_idle_text"></div></div></div>
-        <div class="row"><span class="row-title" data-i18n="l_cm">Active Color Mode</span><div class="seg" id="seg-color_mode"><div class="seg-item" data-v="multi" onclick="setOpt('color_mode','multi')">Multi</div><div class="seg-item" data-v="mono" onclick="setOpt('color_mode','mono')">Mono</div></div></div>
+        <div class="row"><span class="row-title" data-i18n="l_cm">Active Color Mode</span><div class="seg" id="seg-color_mode"><div class="seg-item" data-v="multi" onclick="setOpt('color_mode','multi')" data-i18n="v_multi">Multi</div><div class="seg-item" data-v="mono" onclick="setOpt('color_mode','mono')" data-i18n="v_mono">Mono</div></div></div>
         <div id="dyn-colors"></div>
       </div>
     </div>
@@ -218,7 +215,7 @@
 <script>
   const L={
     en:{nav_overview:"Modules/Hotkeys",nav_snap:"FancyZones",nav_tools:"WindowTop/Tools",nav_bar:"Desktop Bar PRO",
-      sec_mod:"Modules & Integrated Hotkeys",sec_hotkeys:"Layout Slot Hotkeys",d_hotkeys:"Click a field and press a shortcut. Bare letters, numbers and Space are not allowed.",b_reset_keys:"Reset to F1-F6",screenshot_hotkey_title:"Quick Screenshot",screenshot_hotkey_desc:"Capture the monitor under the pointer and copy it to the clipboard.",screenshot_region_title:"Region Screenshot",screenshot_region_desc:"Drag to select a rectangle and capture only that area.",screenshot_window_title:"Window Screenshot",screenshot_window_desc:"Capture the active window only.",extract_hotkey_title:"Quick Extract",extract_hotkey_desc:"Extract the archives selected in Explorer to same-name folders.",m_screenshot:"Quick Screenshot",d_screenshot:"Save and copy a monitor capture with one shortcut",m_extract:"Quick Extract",d_extract:"Extract selected archives to a same-name folder with one shortcut",m_auto:"Launch at Windows Startup",d_auto:"Start background engine upon sign-in",
+      sec_mod:"Modules & Integrated Hotkeys",sec_hotkeys:"Layout Slot Hotkeys",d_hotkeys:"Click a field and press a shortcut. Bare letters, numbers and Space are not allowed.",b_reset_keys:"Reset to F1-F6",screenshot_hotkey_title:"Quick Screenshot",screenshot_hotkey_desc:"Capture the monitor under the pointer and copy it to the clipboard.",screenshot_region_title:"Region Screenshot",screenshot_region_desc:"Drag to select a rectangle and capture only that area.",screenshot_window_title:"Window Screenshot",screenshot_window_desc:"Capture the active window only.",m_screenshot:"Quick Screenshot",d_screenshot:"Save and copy a monitor capture with one shortcut",m_auto:"Launch at Windows Startup",d_auto:"Start background engine upon sign-in",
       m_bar:"Desktop Bar PRO",d_bar:"120FPS top-docked virtual desktop switcher",m_snap:"FancyZones (1 to 6 Zones)",d_snap:"Use the assigned hotkey for each layout slot",
       m_wtop:"WindowTop Pro (Pin/Opacity/Ghost)",d_wtop:"Pin border, opacity wheel, click-through ghost",m_sh:"Quick Shell Launcher (User/Admin)",d_sh:"Open PowerShell in active/hovered Explorer path",
       sec_scfg:"Snapping & Coupled Edge Resize",l_ov:"Show Zone Overlay on Window Drag",l_cp:"Coupled Neighbor Resize (Sticky Edge)",d_cp:"Dragging a window edge resizes adjacent snapped windows smoothly",
@@ -228,8 +225,11 @@
       l_wt:"Prefer Windows Terminal (wt.exe)",
       sec_pr:"Color Presets",sec_bd:"Dimensions & Typography",l_bh:"Bar Height (min 18px)",l_fs:"Font Size",l_fw:"Font Weight/Italic",l_al:"Alignment/Pill Width",l_pg:"Pill Spacing",l_pr:"Corner Radius",l_po:"Pill Opacity",
       sec_fx:"Effects & Colors",l_tb:"100% Transparent Bar",l_bb:"Bar Background",l_ft:"Dock Zoom/Border/Underline",l_hv:"Hover Fill Color",l_hvt:"Hover Text Color",l_pp:"Active Pill Extra Padding",l_id:"Idle Pill Fill/Color/Text",l_cm:"Active Color Mode",
+      v_light:"Light",v_regular:"Regular",v_bold:"Bold",v_left:"Left",v_center:"Center",v_stretch:"Stretch",v_compact:"Compact",v_normal:"Normal",v_wide:"Wide",v_multi:"Multi",v_mono:"Mono",
+      l_ac:"Active Fill/Text/Accent",c_fill:"Fill",c_text:"Text",c_glow:"Glow",h_vsplit:"Split Vertical",h_hsplit:"Split Horizontal",h_draw:"Draw Box",h_del:"Delete Zone",
+      th_dark:"Dark / Light",th_light:"Light / Dark",a_zone:"Create at least 1 zone.",
       },
-    vi:{sec_hotkeys:"Phím tắt cho 6 ô bố cục",d_hotkeys:"Bấm vào ô phím rồi nhấn tổ hợp. Không nhận chữ cái, số hoặc Space bấm trần.",b_reset_keys:"Đặt lại F1-F6",screenshot_hotkey_title:"Chụp màn hình nhanh",screenshot_hotkey_desc:"Chụp màn hình dưới con trỏ và sao chép ảnh vào clipboard.",screenshot_region_title:"Chụp vùng chọn",screenshot_region_desc:"Kéo chuột chọn vùng rồi chỉ chụp vùng đó.",screenshot_window_title:"Chụp cửa sổ",screenshot_window_desc:"Chỉ chụp cửa sổ đang dùng.",extract_hotkey_title:"Giải nén nhanh",extract_hotkey_desc:"Giải nén các file đang chọn trong Explorer ra thư mục cùng tên.",m_screenshot:"Chụp màn hình nhanh",d_screenshot:"Lưu và sao chép ảnh màn hình bằng một phím tắt",m_extract:"Giải nén nhanh",d_extract:"Giải nén file đang chọn ra thư mục cùng tên bằng một phím tắt",nav_overview:"Tính năng/Phím tắt",nav_snap:"Chia vùng",nav_tools:"WindowTop/Tiện ích",nav_bar:"Desktop Bar PRO",
+    vi:{sec_hotkeys:"Phím tắt cho 6 ô bố cục",d_hotkeys:"Bấm vào ô phím rồi nhấn tổ hợp. Không nhận chữ cái, số hoặc Space bấm trần.",b_reset_keys:"Đặt lại F1-F6",screenshot_hotkey_title:"Chụp màn hình nhanh",screenshot_hotkey_desc:"Chụp màn hình dưới con trỏ và sao chép ảnh vào clipboard.",screenshot_region_title:"Chụp vùng chọn",screenshot_region_desc:"Kéo chuột chọn vùng rồi chỉ chụp vùng đó.",screenshot_window_title:"Chụp cửa sổ",screenshot_window_desc:"Chỉ chụp cửa sổ đang dùng.",m_screenshot:"Chụp màn hình nhanh",d_screenshot:"Lưu và sao chép ảnh màn hình bằng một phím tắt",nav_overview:"Tính năng/Phím tắt",nav_snap:"Chia vùng",nav_tools:"WindowTop/Tiện ích",nav_bar:"Desktop Bar PRO",
       sec_mod:"Quản lý Tính năng & Phím tắt Tích hợp",m_auto:"Khởi động cùng Windows",d_auto:"Tự động chạy ngầm khi đăng nhập máy tính",
       m_bar:"Desktop Bar PRO",d_bar:"Thanh điều hướng Virtual Desktop 120fps cố định cạnh trên",m_snap:"Chia vùng màn hình (1 đến 6 ô)",d_snap:"Dùng phím đã gán cho từng ô bố cục",
       m_wtop:"WindowTop Pro (Ghim/Mờ/Xuyên chuột)",d_wtop:"Viền ghim DWM, chỉnh độ mờ, xuyên chuột ghost",m_sh:"Quick Shell (Thường/Admin)",d_sh:"Mở PowerShell tại đúng thư mục đang mở/trỏ chuột",
@@ -240,16 +240,25 @@
       l_wt:"Ưu tiên Windows Terminal (wt.exe)",
       sec_pr:"Mẫu phối màu nhanh",sec_bd:"Kích thước & Chữ",l_bh:"Chiều cao bar (tối thiểu 18px)",l_fs:"Kích thước chữ",l_fw:"Độ đậm/Nghiêng chữ",l_al:"Căn lề/Độ rộng viên",l_pg:"Khoảng cách viên",l_pr:"Bo tròn góc",l_po:"Độ đậm viên",
       sec_fx:"Hiệu ứng & Màu sắc",l_tb:"Nền thanh bar trong suốt 100%",l_bb:"Màu nền bar",l_ft:"Phóng to/Viền sáng/Gạch chân",l_hv:"Màu lia chuột",l_hvt:"Màu chữ lia chuột",l_pp:"Nở rộng viên đang chọn",l_id:"Nền/Màu/Chữ màn chưa chọn",l_cm:"Chế độ màu Active",
+      v_light:"Mảnh",v_regular:"Thường",v_bold:"Đậm",v_left:"Trái",v_center:"Giữa",v_stretch:"Giãn đều",v_compact:"Gọn",v_normal:"Vừa",v_wide:"Rộng",v_multi:"Nhiều màu",v_mono:"Một màu",
+      l_ac:"Nền/Chữ/Nhấn của viên đang chọn",c_fill:"Nền",c_text:"Chữ",c_glow:"Viền sáng",h_vsplit:"Cắt dọc ô",h_hsplit:"Cắt ngang ô",h_draw:"Vẽ ô mới",h_del:"Xóa ô đã bấm",
+      th_dark:"Tối/Sáng",th_light:"Sáng/Tối",a_zone:"Cần ít nhất 1 ô.",
       }
   };
   let cfg={},desktops=[],monitors=[],zones=[],tool='vsplit',curTab='overview';
-  async function post(u,d){await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})}
+  // Slots chosen here since the last save. The rest of the map belongs to the running app (slot hotkeys).
+  let dirtySlots={},stopCapture=null;
+  const tr=k=>L[cfg.studio_lang==='vi'?'vi':'en'][k];
+  async function post(u,d){
+    if(u==='/api/save_config'){d={...d,snap_monitor_active_slots:dirtySlots};dirtySlots={}}
+    await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
+  }
   function goTab(id,el){
     curTab=id;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
     el.classList.add('active');document.getElementById('page-'+id).classList.add('active');applyLang();
   }
-  function toggleLang(){cfg.studio_lang=(cfg.studio_lang==='vi')?'en':'vi';applyLang();post('/api/save_config',cfg)}
+  function toggleLang(){cfg.studio_lang=(cfg.studio_lang==='vi')?'en':'vi';sync();post('/api/save_config',cfg)}
   function applyLang(){
     const isVi=(cfg.studio_lang==='vi');
     const d=L[isVi?'vi':'en'];
@@ -257,12 +266,18 @@
     ['overview','snap','tools','bar'].forEach(k=>document.getElementById('nav-'+k).textContent=d['nav_'+k]);
     document.getElementById('page-title').textContent=d['nav_'+curTab];
     document.querySelectorAll('[data-i18n]').forEach(e=>{const k=e.getAttribute('data-i18n');if(d[k])e.textContent=d[k]});
+    document.getElementById('lbl-tool').textContent=d['h_'+tool];
+    document.querySelectorAll('#sel-monitor option').forEach((o,i)=>o.textContent=monitorLabel(monitors[i].label));
   }
+  // Monitor and default layout names arrive in English; only their display is translated.
+  const LAYOUT_VI={'1 Fullscreen Zone':'1 Ô toàn màn','2 Columns (50/50)':'2 Cột (50/50)','3 Columns (33/33/33)':'3 Cột (33/33/33)','4 Quadrant Grid (2x2)':'Lưới 4 ô (2x2)','5 Focus Grid (Main+4)':'Lưới tập trung (Chính+4)','6 Matrix Grid (3x2)':'Lưới 6 ô (3x2)'};
+  function layoutName(n){return cfg.studio_lang!=='vi'?n:LAYOUT_VI[n]||n.replace(/^Custom \((\d+) Zones\)$/,'Tùy chỉnh ($1 ô)')}
+  function monitorLabel(s){return cfg.studio_lang!=='vi'?s:s.replace(/^Display /,'Màn hình ').replace('(Primary)','(Chính)').replace('(External)','(Phụ)')}
   function toggleTheme(){cfg.studio_theme=(cfg.studio_theme==='light')?'dark':'light';applyTheme();post('/api/save_config',cfg)}
   function applyTheme(){
     const isL=(cfg.studio_theme==='light');
     document.body.classList.toggle('light',isL);
-    document.getElementById('btn-theme').textContent=isL?'Light / Dark':'Dark / Light';
+    document.getElementById('btn-theme').textContent=tr(isL?'th_light':'th_dark');
   }
   function picker(id,hex,cb){
     const el=document.getElementById(id);if(!el)return;
@@ -278,7 +293,7 @@
     document.getElementById('row-bg-color').style.opacity=cfg.bar_transparent?'0.4':'1';
     [['font_size',13,'px'],['snap_zone_spacing',8,'px'],['snap_overlay_opacity',0.38,'%'],['snap_span_margin',95,'px'],['aot_border_width',3,'px'],['ghost_opacity',0.45,'%'],['active_pop_padding',2,'px'],['pill_gap',22,'px'],['pill_radius',9,'px'],['height',28,'px'],['opacity',0.94,'%']].forEach(([k,df,u])=>{
       const v=cfg[k]??df,el=document.getElementById('sl-'+k);
-      if(el){el.value=v;document.getElementById('val-'+k).textContent=(u==='%')?Math.round(v*100)+'%':(k==='active_pop_padding'?'+':'')+v+u}
+      if(el){el.value=v;showSl(k,v,u)}
     });
     picker('cg-aot_border_color',cfg.aot_border_color||'#ffffff',v=>upd({aot_border_color:v}));
     picker('cg-bg_color',cfg.bg_color,v=>upd({bg_color:v}));
@@ -289,12 +304,12 @@
   function renderDynColors(){
     const a=document.getElementById('dyn-colors');
     if(cfg.color_mode==='mono'){
-      a.innerHTML=`<div class="row"><span class="row-title">Active Fill/Text/Accent</span><div style="display:flex;gap:8px"><div class="color-wrap" id="cg-mono_active_bg"></div><div class="color-wrap" id="cg-mono_active_text"></div><div class="color-wrap" id="cg-mono_accent"></div></div></div>`;
+      a.innerHTML=`<div class="row"><span class="row-title">${tr('l_ac')}</span><div style="display:flex;gap:8px"><div class="color-wrap" id="cg-mono_active_bg"></div><div class="color-wrap" id="cg-mono_active_text"></div><div class="color-wrap" id="cg-mono_accent"></div></div></div>`;
       ['mono_active_bg','mono_active_text','mono_accent'].forEach(k=>picker('cg-'+k,cfg[k],v=>upd({[k]:v})));
     }else{
       a.innerHTML='<div style="display:flex;flex-direction:column;gap:8px">'+desktops.map(d=>{
         const k=String(d.num),p=cfg.multi_pills[k]||{bg:'#0284c7',fg:'#ffffff',accent:'#38bdf8'};
-        return `<div class="multi-item"><span style="font-size:13px;font-weight:600">${d.name}</span><div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;color:var(--muted)">Fill</span><div class="swatch" style="background:${p.bg}"><input type="color" value="${p.bg}" oninput="setMulti('${k}','bg',this)"></div><span style="font-size:11px;color:var(--muted)">Text</span><div class="swatch" style="background:${p.fg}"><input type="color" value="${p.fg}" oninput="setMulti('${k}','fg',this)"></div><span style="font-size:11px;color:var(--muted)">Glow</span><div class="swatch" style="background:${p.accent||p.fg}"><input type="color" value="${p.accent||p.fg}" oninput="setMulti('${k}','accent',this)"></div></div></div>`;
+        return `<div class="multi-item"><span style="font-size:13px;font-weight:600">${d.name}</span><div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;color:var(--muted)">${tr('c_fill')}</span><div class="swatch" style="background:${p.bg}"><input type="color" value="${p.bg}" oninput="setMulti('${k}','bg',this)"></div><span style="font-size:11px;color:var(--muted)">${tr('c_text')}</span><div class="swatch" style="background:${p.fg}"><input type="color" value="${p.fg}" oninput="setMulti('${k}','fg',this)"></div><span style="font-size:11px;color:var(--muted)">${tr('c_glow')}</span><div class="swatch" style="background:${p.accent||p.fg}"><input type="color" value="${p.accent||p.fg}" oninput="setMulti('${k}','accent',this)"></div></div></div>`;
       }).join('')+'</div>';
     }
   }
@@ -302,7 +317,8 @@
   function togMod(k){cfg.modules[k]=!cfg.modules[k];sync();post('/api/save_config',cfg)}
   function setOpt(k,v){cfg[k]=v;sync();post('/api/save_config',cfg)}
   function togOpt(k){cfg[k]=!cfg[k];sync();post('/api/save_config',cfg)}
-  function setSl(k,v,u){cfg[k]=v;document.getElementById('val-'+k).textContent=(u==='%')?Math.round(v*100)+'%':(k==='active_pop_padding'?'+':'')+v+u;post('/api/save_config',cfg)}
+  function showSl(k,v,u){document.getElementById('val-'+k).textContent=(u==='%')?Math.round(v*100)+'%':(k==='active_pop_padding'?'+':'')+v+u}
+  function setSl(k,v,u){cfg[k]=v;showSl(k,v,u);post('/api/save_config',cfg)}
   function upd(p){Object.assign(cfg,p);post('/api/save_config',cfg)}
   function applyPreset(n){
     if(n==='floating_multi')Object.assign(cfg,{bar_transparent:true,color_mode:'multi',pill_style:'filled',idle_has_bg:true,active_underline:false,active_border:true,mono_idle_bg:'#18181f',mono_idle_text:'#b4b4be'});
@@ -334,8 +350,6 @@
   function slotHotkey(n){const raw=(cfg.slot_hotkeys||{})[String(n)]||DEFAULT_SLOT_HOTKEYS[String(n)],p=hotkeyParts(raw);return p&&(!p.bare||/^F(?:[1-9]|1[0-2])$/.test(p.key))?p.text:DEFAULT_SLOT_HOTKEYS[String(n)]}
   const DEFAULT_SCREENSHOT_HOTKEYS={full:'Alt+F6',region:'Alt+F8',window:'Alt+F7'};
   function screenshotHotkey(mode){mode=mode||'full';const raw=mode==='full'?(cfg.screenshot_hotkey||'Alt+F6'):mode==='region'?(cfg.screenshot_hotkey_region||'Alt+F8'):(cfg.screenshot_hotkey_window||'Alt+F7');const p=hotkeyParts(raw);if(!p)return DEFAULT_SCREENSHOT_HOTKEYS[mode];if(p.bare&&mode!=='full')return DEFAULT_SCREENSHOT_HOTKEYS[mode];if(p.bare&&p.key!=='PRINTSCREEN')return DEFAULT_SCREENSHOT_HOTKEYS[mode];return p.text}
-  const DEFAULT_EXTRACT_HOTKEY='Ctrl+Alt+X';
-  function extractHotkey(){const raw=cfg.extract_hotkey||'Ctrl+Alt+X',p=hotkeyParts(raw);if(!p||p.bare)return DEFAULT_EXTRACT_HOTKEY;return p.text}
   function hotkeyParts(value){
     if(typeof value!=='string'||!value.trim())return null;
     const p=value.toUpperCase().split('+').map(x=>x.trim());if(p.some(x=>!x)||p.some(x=>['WIN','WINDOWS','META','CMD'].includes(x)))return null;
@@ -352,70 +366,65 @@
     document.getElementById('capture-screenshot-hotkey').textContent=screenshotHotkey('full');
     document.getElementById('capture-screenshot-region-hotkey').textContent=screenshotHotkey('region');
     document.getElementById('capture-screenshot-window-hotkey').textContent=screenshotHotkey('window');
-    document.getElementById('capture-extract-hotkey').textContent=extractHotkey();
     document.getElementById('slot-hotkeys-badge').textContent=Object.keys(DEFAULT_SLOT_HOTKEYS).map(n=>slotHotkey(n)).join(', ');
     document.getElementById('screenshot-hotkey-badge').textContent=screenshotHotkey('full');
-    document.getElementById('extract-hotkey-badge').textContent=extractHotkey();
     const slotSelect=document.getElementById('sel-slot');if(slotSelect)Array.from(slotSelect.options).forEach(o=>o.textContent=slotHotkey(o.value));
     document.querySelectorAll('.hotkey-capture').forEach(button=>button.onclick=()=>captureHotkey(button));
     updateHotkeyWarnings();
   }
+  const SYSTEM_KEYS=['F9','F10','Alt+T','Alt+G','Ctrl+Alt+V','Ctrl+Alt+H','Alt+Shift+Up','Alt+Shift+Down'];
   function updateHotkeyWarnings(){
     const used={};Object.keys(DEFAULT_SLOT_HOTKEYS).forEach(n=>{const p=hotkeyParts(slotHotkey(n));if(p){const k=p.text;(used[k]||(used[k]=[])).push(n)}});
-    const system=['F9','F10','Alt+T','Alt+G','Ctrl+Alt+V','Ctrl+Alt+H','Alt+Shift+Up','Alt+Shift+Down'];
     const warning=document.getElementById('hotkey-warning');if(!warning)return;
     const messages=[];Object.keys(used).forEach(k=>{if(used[k].length>1)messages.push((cfg.studio_lang==='vi'?'Trùng ô: ':'Duplicate slots: ')+k)});
-    Object.keys(used).forEach(k=>{if(system.includes(k))messages.push((cfg.studio_lang==='vi'?'Trùng phím hệ thống: ':'Conflicts with system key: ')+k)});
-    ['full','region','window'].forEach(m=>{const k=screenshotHotkey(m);const clash=Object.keys(DEFAULT_SLOT_HOTKEYS).some(n=>slotHotkey(n)===k)||['full','region','window'].some(o=>o!==m&&screenshotHotkey(o)===k)||system.includes(k);if(clash)messages.push((cfg.studio_lang==='vi'?'Trùng phím chụp ('+m+'): ':'Screenshot key conflict ('+m+'): ')+k)});
-    const ek=extractHotkey();const eclash=Object.keys(DEFAULT_SLOT_HOTKEYS).some(n=>slotHotkey(n)===ek)||['full','region','window'].some(m=>screenshotHotkey(m)===ek)||system.includes(ek);if(eclash)messages.push((cfg.studio_lang==='vi'?'Trùng phím giải nén: ':'Extract key conflict: ')+ek);
+    Object.keys(used).forEach(k=>{if(SYSTEM_KEYS.includes(k))messages.push((cfg.studio_lang==='vi'?'Trùng phím hệ thống: ':'Conflicts with system key: ')+k)});
+    const modeVi={full:'toàn màn',region:'vùng',window:'cửa sổ'};
+    ['full','region','window'].forEach(m=>{const k=screenshotHotkey(m);const clash=Object.keys(DEFAULT_SLOT_HOTKEYS).some(n=>slotHotkey(n)===k)||['full','region','window'].some(o=>o!==m&&screenshotHotkey(o)===k)||SYSTEM_KEYS.includes(k);if(clash)messages.push((cfg.studio_lang==='vi'?'Trùng phím chụp ('+modeVi[m]+'): ':'Screenshot key conflict ('+m+'): ')+k)});
     warning.textContent=messages.join(' • ');
   }
   function findHotkeyClash(text, kind, id){
-    const system=['F9','F10','Alt+T','Alt+G','Ctrl+Alt+V','Ctrl+Alt+H','Alt+Shift+Up','Alt+Shift+Down'];
     const vi=cfg.studio_lang==='vi';
     const slotKeys=Object.keys(DEFAULT_SLOT_HOTKEYS).map(n=>slotHotkey(n));
     const shotKeys=['full','region','window'].map(m=>screenshotHotkey(m));
-    if(system.includes(text))return (vi?'Phím này đã dùng cho chức năng hệ thống: ':'This key is already used by a system function: ')+text;
+    if(SYSTEM_KEYS.includes(text))return (vi?'Phím này đã dùng cho chức năng hệ thống: ':'This key is already used by a system function: ')+text;
     if(kind==='slot'){
       if(shotKeys.includes(text))return (vi?'Phím này đã dùng cho chụp màn hình: ':'This key is already used by screenshot: ')+text;
-      if(extractHotkey()===text)return (vi?'Phím này đã dùng cho giải nén nhanh: ':'This key is already used by Quick Extract: ')+text;
       if(slotKeys.some((k,i)=>k===text&&Object.keys(DEFAULT_SLOT_HOTKEYS)[i]!==id))return (vi?'Phím này đã dùng cho ô bố cục khác: ':'This key is already used by another layout slot: ')+text;
     }else if(kind==='shot'){
       if(slotKeys.includes(text))return (vi?'Phím này đã dùng cho ô bố cục: ':'This key is already used by a layout slot: ')+text;
       if(shotKeys.some((k,i)=>k===text&&['full','region','window'][i]!==id))return (vi?'Phím này đã dùng cho chế độ chụp khác: ':'This key is already used by another capture mode: ')+text;
-      if(extractHotkey()===text)return (vi?'Phím này đã dùng cho giải nén nhanh: ':'This key is already used by Quick Extract: ')+text;
-    }else if(kind==='extract'){
-      if(slotKeys.includes(text))return (vi?'Phím này đã dùng cho ô bố cục: ':'This key is already used by a layout slot: ')+text;
-      if(shotKeys.includes(text))return (vi?'Phím này đã dùng cho chụp màn hình: ':'This key is already used by screenshot: ')+text;
     }
     return null;
   }
   function captureHotkey(button){
+    if(stopCapture)stopCapture();
+    const label=button.textContent;
     button.textContent=cfg.studio_lang==='vi'?'Nhấn phím...':'Press shortcut...';post('/api/capture',{active:true});
     const done=e=>{
       if(['Control','Alt','Shift','Meta'].includes(e.key))return;
-      e.preventDefault();window.removeEventListener('keydown',done,true);post('/api/capture',{active:false});
+      e.preventDefault();stopCapture=null;window.removeEventListener('keydown',done,true);post('/api/capture',{active:false});
       if(e.key==='Escape'){renderHotkeys();return}
       if(e.metaKey){renderHotkeys();document.getElementById('hotkey-warning').textContent=cfg.studio_lang==='vi'?'Không hỗ trợ phím Windows.':'Windows key is not supported.';return}
-      const key=e.key===' '?'Space':e.key==='PrintScreen'?'PrintScreen':e.key==='ArrowUp'?'Up':e.key==='ArrowDown'?'Down':e.key.length===1?e.key.toUpperCase():e.key.toUpperCase();
+      // With Shift held e.key is a symbol; the physical code still names the digit.
+      const key=/^Digit\d$/.test(e.code)?e.code.slice(5):e.key===' '?'Space':e.key==='ArrowUp'?'Up':e.key==='ArrowDown'?'Down':e.key.toUpperCase();
       const value=[e.ctrlKey?'Ctrl':null,e.altKey?'Alt':null,e.shiftKey?'Shift':null,key].filter(Boolean).join('+');
-      const parsed=hotkeyParts(value),shotMode=button.dataset.shot||null,isShot=!!shotMode,isExtract=!!button.dataset.extract;
-      if(!parsed||(!isShot&&!isExtract&&parsed.bare&&!/^F(?:[1-9]|1[0-2])$/.test(parsed.key))){renderHotkeys();document.getElementById('hotkey-warning').textContent=cfg.studio_lang==='vi'?'Phím bấm trần chỉ nhận F1-F12.':'Bare keys are limited to F1-F12.';return}
+      const parsed=hotkeyParts(value),shotMode=button.dataset.shot||null,isShot=!!shotMode;
+      if(!parsed||(!isShot&&parsed.bare&&!/^F(?:[1-9]|1[0-2])$/.test(parsed.key))){renderHotkeys();document.getElementById('hotkey-warning').textContent=cfg.studio_lang==='vi'?'Phím bấm trần chỉ nhận F1-F12.':'Bare keys are limited to F1-F12.';return}
       if(isShot&&shotMode!=='full'&&parsed.bare){renderHotkeys();document.getElementById('hotkey-warning').textContent=cfg.studio_lang==='vi'?'Phím chụp vùng/cửa sổ cần giữ Ctrl, Alt hoặc Shift.':'Region/window capture needs Ctrl, Alt or Shift.';return}
-      if(isExtract&&parsed.bare){renderHotkeys();document.getElementById('hotkey-warning').textContent=cfg.studio_lang==='vi'?'Phím giải nén cần giữ Ctrl, Alt hoặc Shift.':'Extract needs Ctrl, Alt or Shift.';return}
       if(isShot&&shotMode==='full'&&parsed.bare&&parsed.key!=='PRINTSCREEN'){renderHotkeys();document.getElementById('hotkey-warning').textContent=cfg.studio_lang==='vi'?'Phím toàn màn bấm trần chỉ nhận PrintScreen.':'Bare fullscreen capture only accepts PrintScreen.';return}
-      const clash=findHotkeyClash(parsed.text,isShot?'shot':isExtract?'extract':'slot',isShot?shotMode:isExtract?null:button.dataset.slot);
+      const clash=findHotkeyClash(parsed.text,isShot?'shot':'slot',isShot?shotMode:button.dataset.slot);
       if(clash){renderHotkeys();document.getElementById('hotkey-warning').textContent=clash;return}
-      if(isShot){if(shotMode==='full')cfg.screenshot_hotkey=parsed.text;else if(shotMode==='region')cfg.screenshot_hotkey_region=parsed.text;else cfg.screenshot_hotkey_window=parsed.text}else if(isExtract){cfg.extract_hotkey=parsed.text}else{if(!cfg.slot_hotkeys)cfg.slot_hotkeys={};cfg.slot_hotkeys[button.dataset.slot]=parsed.text}
+      if(isShot){if(shotMode==='full')cfg.screenshot_hotkey=parsed.text;else if(shotMode==='region')cfg.screenshot_hotkey_region=parsed.text;else cfg.screenshot_hotkey_window=parsed.text}else{if(!cfg.slot_hotkeys)cfg.slot_hotkeys={};cfg.slot_hotkeys[button.dataset.slot]=parsed.text}
       renderHotkeys();post('/api/save_config',cfg);
     };
+    stopCapture=()=>{window.removeEventListener('keydown',done,true);button.textContent=label;stopCapture=null};
     window.addEventListener('keydown',done,true);
   }
   function resetSlotHotkeys(){cfg.slot_hotkeys={...DEFAULT_SLOT_HOTKEYS};renderHotkeys();post('/api/save_config',cfg)}
   function pickSlot(n){
     const k=scopeKey();
     if(!cfg.snap_monitor_active_slots)cfg.snap_monitor_active_slots={};
-    cfg.snap_monitor_active_slots[k]=String(n);document.getElementById('sel-slot').value=String(n);
+    cfg.snap_monitor_active_slots[k]=dirtySlots[k]=String(n);document.getElementById('sel-slot').value=String(n);
     renderSnap();cloneAct();post('/api/save_config',cfg);
   }
   function renderSnap(){
@@ -425,12 +434,12 @@
     const dsel=document.getElementById('sel-desktop'),dopt=dsel&&dsel.options[dsel.selectedIndex],mopt=sel.options[sel.selectedIndex];
     const lbl=document.getElementById('lbl-scope');if(lbl)lbl.textContent=(dopt?dopt.textContent:'Desktop 1')+' • '+(mopt?mopt.textContent:'');
     const lays=scopeLayouts();
-    document.getElementById('snap-list').innerHTML=Object.entries(lays).map(([n,l])=>`<div class="z-card ${n===act?'sel':''}" onclick="pickSlot('${n}')"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600"><span>${l.name}</span><span class="kbd">${slotHotkey(n)}</span></div><div class="z-prev">${l.zones.map((z,i)=>`<div class="z-box" style="left:${z[0]*100}%;top:${z[1]*100}%;width:${(z[2]-z[0])*100}%;height:${(z[3]-z[1])*100}%">${i+1}</div>`).join('')}</div></div>`).join('');
+    document.getElementById('snap-list').innerHTML=Object.entries(lays).map(([n,l])=>`<div class="z-card ${n===act?'sel':''}" onclick="pickSlot('${n}')"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600"><span>${layoutName(l.name)}</span><span class="kbd">${slotHotkey(n)}</span></div><div class="z-prev">${l.zones.map((z,i)=>`<div class="z-box" style="left:${z[0]*100}%;top:${z[1]*100}%;width:${(z[2]-z[0])*100}%;height:${(z[3]-z[1])*100}%">${i+1}</div>`).join('')}</div></div>`).join('');
   }
   const cv=document.getElementById('ed-canvas');let dr=false,sx=0,sy=0,cb=null;
   function setTool(t,el){
     tool=t;document.querySelectorAll('#seg-tool .seg-item').forEach(b=>b.classList.remove('active'));el.classList.add('active');
-    document.getElementById('lbl-tool').textContent={vsplit:'Split Vertical',hsplit:'Split Horizontal',draw:'Draw Box',del:'Delete Zone'}[t]||t;
+    document.getElementById('lbl-tool').textContent=tr('h_'+t);
   }
   function drawEd(){cv.innerHTML=zones.map((z,i)=>`<div class="z-box" style="left:${z[0]*100}%;top:${z[1]*100}%;width:${(z[2]-z[0])*100}%;height:${(z[3]-z[1])*100}%">${i+1}</div>`).join('')}
   function cloneAct(){
@@ -452,18 +461,18 @@
   cv.addEventListener('mousemove',e=>{if(!dr)return;const r=cv.getBoundingClientRect(),cx=Math.max(0,Math.min(r.width,e.clientX-r.left)),cy=Math.max(0,Math.min(r.height,e.clientY-r.top));cb.style.left=Math.min(sx,cx)+'px';cb.style.top=Math.min(sy,cy)+'px';cb.style.width=Math.abs(cx-sx)+'px';cb.style.height=Math.abs(cy-sy)+'px'});
   cv.addEventListener('mouseup',e=>{if(!dr)return;dr=false;const r=cv.getBoundingClientRect(),cx=Math.max(0,Math.min(r.width,e.clientX-r.left)),cy=Math.max(0,Math.min(r.height,e.clientY-r.top));const x1=Math.min(sx,cx)/r.width,y1=Math.min(sy,cy)/r.height,x2=Math.max(sx,cx)/r.width,y2=Math.max(sy,cy)/r.height;if((x2-x1)>0.04&&(y2-y1)>0.04){zones.push([+x1.toFixed(3),+y1.toFixed(3),+x2.toFixed(3),+y2.toFixed(3)]);drawEd()}else cb.remove()});
   function saveEd(){
-    if(!zones.length)return alert('Create at least 1 zone.');
+    if(!zones.length)return alert(tr('a_zone'));
     const k=scopeKey(),s=document.getElementById('sel-slot').value;
     scopeLayouts();
-    cfg.snap_monitors[k][s]={name:'Custom ('+zones.length+' Zones)',zones:zones};
+    cfg.snap_monitors[k][s]={name:'Custom ('+zones.length+' Zones)',zones:JSON.parse(JSON.stringify(zones))};
     if(!cfg.snap_monitor_active_slots)cfg.snap_monitor_active_slots={};
-    cfg.snap_monitor_active_slots[k]=s;renderSnap();post('/api/save_config',cfg);
+    cfg.snap_monitor_active_slots[k]=dirtySlots[k]=s;renderSnap();post('/api/save_config',cfg);
   }
   window.addEventListener('DOMContentLoaded',async()=>{
     const r=await fetch('/api/init'),d=await r.json();
     cfg=d.config;desktops=d.desktops;monitors=d.monitors;
-    if(!cfg.modules)cfg.modules={};if(cfg.modules.screenshot===undefined)cfg.modules.screenshot=true;if(cfg.modules.extract===undefined)cfg.modules.extract=true;
-    document.getElementById('sel-monitor').innerHTML=monitors.map(m=>`<option value="${m.id}">${m.label}</option>`).join('');
+    if(!cfg.modules)cfg.modules={};if(cfg.modules.screenshot===undefined)cfg.modules.screenshot=true;
+    document.getElementById('sel-monitor').innerHTML=monitors.map(m=>`<option value="${m.id}">${monitorLabel(m.label)}</option>`).join('');
     const dsel=document.getElementById('sel-desktop'),curD=(d.current_desktop&&d.current_desktop.num)||1;
     dsel.innerHTML=desktops.map(x=>`<option value="${x.num}" ${x.num===curD?'selected':''}>${x.name}</option>`).join('');
     sync();cloneAct();

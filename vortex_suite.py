@@ -1,5 +1,5 @@
 """
-LEHA Vortex Workspace Suite (v1.3.8)
+LEHA Vortex Workspace Suite (v1.3.10)
 Enterprise-Grade Windows 10/11 Workspace & Window Management Engine
 
 Architecture:
@@ -35,7 +35,6 @@ import tkinter as tk
 import urllib.parse
 import uuid
 import winreg
-import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -66,7 +65,7 @@ except Exception:
 # Windows 11 24H2, where Microsoft changed the internal desktop COM
 # interfaces; the crashes continued without it, so the hunt goes on via
 # crash dumps). Only stable surfaces are used now: the Explorer registry
-# store for reads and renames, the documented IVirtualDesktopManager for
+# store for reads, the documented IVirtualDesktopManager for
 # per-window desktop ids, and (v1.2.3) IVirtualDesktopManagerInternal's
 # SwitchDesktop to jump straight to a desktop -- the Win+Ctrl+Arrow key
 # simulation remains only as a fallback (it steps through every desktop
@@ -439,7 +438,7 @@ def snap_scope_key(mon_id: str, desk_num: Optional[int] = None) -> str:
     return f"D{n}|{mon_id}"
 
 APP_NAME = "LEHA Vortex Workspace Suite"
-APP_VERSION = "v1.3.8"
+APP_VERSION = "v1.3.10"
 
 HOTKEY_DEFAULTS = {str(i): f"F{i}" for i in range(1, 7)}
 HOTKEY_MODIFIERS = {"CTRL": "ctrl", "CONTROL": "ctrl", "ALT": "alt", "SHIFT": "shift"}
@@ -451,7 +450,7 @@ def parse_hotkey(value: Any) -> Optional[Tuple[int, bool, bool, bool]]:
     if not isinstance(value, str) or not value.strip():
         return None
     parts = [part.strip().upper() for part in value.split("+")]
-    if not parts or any(not part for part in parts) or any(part in ("WIN", "WINDOWS", "META", "CMD") for part in parts):
+    if any(not part for part in parts) or any(part in ("WIN", "WINDOWS", "META", "CMD") for part in parts):
         return None
     modifiers = {"ctrl": False, "alt": False, "shift": False}
     main_keys: List[int] = []
@@ -548,47 +547,6 @@ def normalized_screenshot_hotkeys(config: Dict[str, Any]) -> Dict[str, Tuple[int
     return result
 
 
-def normalized_extract_hotkey(config: Dict[str, Any]) -> Tuple[int, bool, bool, bool]:
-    """Return the safe extract binding, falling back to Ctrl+Alt+X."""
-    parsed = parse_hotkey(config.get("extract_hotkey", "Ctrl+Alt+X"))
-    if parsed is None or not any(parsed[1:]):
-        parsed = parse_hotkey("Ctrl+Alt+X")
-    return parsed
-
-
-ARCHIVE_EXTS = (".zip", ".rar", ".7z")
-
-
-def extract_dest_for(path: str) -> str:
-    """Same-name folder next to the archive (WinRAR 'Extract to ...' style)."""
-    return os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0])
-
-
-def find_winrar() -> Optional[str]:
-    for candidate in (r"C:\Program Files\WinRAR\WinRAR.exe", r"C:\Program Files (x86)\WinRAR\WinRAR.exe"):
-        if os.path.exists(candidate):
-            return candidate
-    return None
-
-
-def get_explorer_selection() -> List[str]:
-    """Return the paths selected in the foreground Explorer window (comtypes)."""
-    try:
-        import comtypes.client
-        hwnd = user32.GetForegroundWindow()
-        shell = comtypes.client.CreateObject("Shell.Application")
-        for win in shell.Windows():
-            try:
-                if win.HWND != hwnd:
-                    continue
-                return [str(item.Path) for item in win.Document.SelectedItems() if getattr(item, "Path", None)]
-            except Exception:
-                continue
-    except Exception as exc:
-        _log_error("extract-selection", exc)
-    return []
-
-
 def normalize_shot_rect(x1: int, y1: int, x2: int, y2: int) -> Tuple[int, int, int, int]:
     """Normalize a drag rectangle to (left, top, right, bottom), at least 1px."""
     left, right = (x1, x2) if x1 <= x2 else (x2, x1)
@@ -644,8 +602,8 @@ HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
 SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0002, 0x0001, 0x0010, 0x0040
 ULW_ALPHA, AC_SRC_OVER, AC_SRC_ALPHA = 0x00000002, 0x00, 0x01
 SW_RESTORE, DWMWA_EXTENDED_FRAME_BOUNDS, DWMWA_CLOAKED, GW_OWNER = 9, 9, 14, 4
-VK_LBUTTON, VK_SHIFT, VK_F1 = 0x01, 0x10, 0x70
-VK_UP, VK_DOWN, VK_G, VK_R = 0x26, 0x28, 0x47, 0x52
+VK_LBUTTON, VK_SHIFT = 0x01, 0x10
+VK_UP, VK_DOWN, VK_G = 0x26, 0x28, 0x47
 WM_LBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEMOVE, WM_MOUSELEAVE, WM_NCHITTEST = 0x0201, 0x0205, 0x0200, 0x02A3, 0x0084
 TME_LEAVE = 0x00000002
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -734,8 +692,6 @@ user32.RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
 user32.RegisterClassExW.restype = wintypes.ATOM
 user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
 user32.CreateWindowExW.restype = wintypes.HWND
-user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
-user32.LoadCursorW.restype = wintypes.HICON
 user32.TrackMouseEvent.argtypes = [ctypes.POINTER(TRACKMOUSEEVENT)]
 user32.TrackMouseEvent.restype = wintypes.BOOL
 user32.CreatePopupMenu.restype = wintypes.HMENU
@@ -753,8 +709,6 @@ shell32.SHAppBarMessage.restype = ctypes.c_size_t
 # as the hInstance of the AppBar window class, so RegisterClassExW and
 # CreateWindowExW intermittently died with an access violation at startup
 # (evidence: vortex_error.log, 22/11/2026).
-kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
-kernel32.CreateMutexW.restype = ctypes.c_void_p
 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
 kernel32.CloseHandle.restype = wintypes.BOOL
 kernel32.GetLastError.restype = wintypes.DWORD
@@ -817,7 +771,6 @@ user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 user32.SetForegroundWindow.restype = wintypes.BOOL
 user32.SetLayeredWindowAttributes.argtypes = [wintypes.HWND, wintypes.COLORREF, wintypes.BYTE, wintypes.DWORD]
 user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
-user32.SetProcessDPIAware.restype = wintypes.BOOL
 user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
 user32.PeekMessageW.restype = wintypes.BOOL
 user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
@@ -938,11 +891,15 @@ def default_snap_layouts() -> Dict[str, Dict[str, Any]]:
     }
 
 
+# The Studio server thread and the UI thread share config.json: never read a half-written file.
+_CONFIG_LOCK = threading.RLock()
+
+
 def load_config_data() -> Dict[str, Any]:
     default_cfg: Dict[str, Any] = {
         "studio_theme": "dark",
         "studio_lang": "vi",
-        "modules": {"desktop_bar": True, "quick_shell": True, "always_on_top": True, "snap_grid": True, "screenshot": True, "extract": True},
+        "modules": {"desktop_bar": True, "quick_shell": True, "always_on_top": True, "snap_grid": True, "screenshot": True},
         "shell_use_wt": True,
         "aot_border_color": "#ffffff",
         "aot_border_width": 3,
@@ -953,7 +910,6 @@ def load_config_data() -> Dict[str, Any]:
         "screenshot_hotkey": "Alt+F6",
         "screenshot_hotkey_region": "Alt+F8",
         "screenshot_hotkey_window": "Alt+F7",
-        "extract_hotkey": "Ctrl+Alt+X",
         "snap_drag_overlay": True,
         "snap_coupled_resize": True,
         "snap_require_shift": False,
@@ -995,15 +951,14 @@ def load_config_data() -> Dict[str, Any]:
     p = get_config_path()
     if os.path.exists(p):
         try:
-            with open(p, "r", encoding="utf-8") as f:
+            with _CONFIG_LOCK, open(p, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
                 if isinstance(loaded, dict):
                     default_cfg.update(loaded)
         except Exception:
             pass
-    # v1.3.5 hotkey reshuffle: old screenshot defaults move to Alt+F6/F7/F8
-    # and a stored extract key colliding with a screenshot key moves back to
-    # Ctrl+Alt+X. A key the user customized herself is left alone.
+    # v1.3.5 hotkey reshuffle: old screenshot defaults move to Alt+F6/F7/F8.
+    # A key the user customized herself is left alone.
     _shot_mode = {"screenshot_hotkey": "full", "screenshot_hotkey_region": "region", "screenshot_hotkey_window": "window"}
     _old_shot = {"screenshot_hotkey": "PrintScreen", "screenshot_hotkey_region": "Ctrl+PrintScreen", "screenshot_hotkey_window": "Alt+PrintScreen"}
     for _key, _old in _old_shot.items():
@@ -1025,15 +980,13 @@ def load_config_data() -> Dict[str, Any]:
                     break
             default_cfg[_key] = _val
         _seen_shot.add(_val)
-    if default_cfg.get("extract_hotkey") in {default_cfg.get("screenshot_hotkey"), default_cfg.get("screenshot_hotkey_region"), default_cfg.get("screenshot_hotkey_window")}:
-        default_cfg["extract_hotkey"] = "Ctrl+Alt+X"
     default_cfg["autostart"] = is_autostart_enabled()
     return default_cfg
 
 
 def save_config_silent(cfg: Dict[str, Any]) -> None:
     try:
-        with open(get_config_path(), "w", encoding="utf-8") as f:
+        with _CONFIG_LOCK, open(get_config_path(), "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
@@ -1091,6 +1044,28 @@ def enumerate_monitors() -> List[Dict[str, str]]:
     return [{"id": m["id"], "label": m["label"]} for m in mons] or [{"id": "DISPLAY_1", "label": "Display 1"}]
 
 
+def monitor_bounds(x: int, y: int, flags: int = 2) -> Optional[Tuple[int, int, int, int]]:
+    """Physical bounds of the monitor at (x, y), or None when Windows cannot tell."""
+    hmon = user32.MonitorFromPoint(POINT(x, y), flags)
+    mi = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+    if not hmon or not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+        return None
+    return (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom)
+
+
+def _explorer_window_folder(window: Any) -> Optional[str]:
+    """Local folder shown by a Shell.Application window, or None."""
+    try:
+        url = str(window.LocationURL or "")
+        if url.lower().startswith("file:///"):
+            path = urllib.parse.unquote(url[8:]).replace("/", "\\")
+            if os.path.isdir(path):
+                return path
+    except Exception:
+        pass
+    return None
+
+
 def get_explorer_target_folder() -> str:
     com_inited = False
     try:
@@ -1119,14 +1094,13 @@ def get_explorer_target_folder() -> str:
                 continue
             for w in windows:
                 try:
-                    if int(w.HWND) == int(target_h):
-                        url = str(w.LocationURL or "")
-                        if url.lower().startswith("file:///"):
-                            path = urllib.parse.unquote(url[8:]).replace("/", "\\")
-                            if os.path.isdir(path):
-                                return path
+                    if int(w.HWND) != int(target_h):
+                        continue
                 except Exception:
                     continue
+                path = _explorer_window_folder(w)
+                if path:
+                    return path
 
         # 3. If inside Explorer but on a different tab handle, take the topmost Explorer window
         cls_buf = ctypes.create_unicode_buffer(64)
@@ -1135,14 +1109,9 @@ def get_explorer_target_folder() -> str:
         user32.GetClassNameW(root_fg, fg_cls, 64)
         if "CabinetWClass" in (cls_buf.value, fg_cls.value):
             for w in windows:
-                try:
-                    url = str(w.LocationURL or "")
-                    if url.lower().startswith("file:///"):
-                        path = urllib.parse.unquote(url[8:]).replace("/", "\\")
-                        if os.path.isdir(path):
-                            return path
-                except Exception:
-                    continue
+                path = _explorer_window_folder(w)
+                if path:
+                    return path
     except Exception as exc:
         _log_error("quick-shell-explorer", exc)
     finally:
@@ -1159,12 +1128,24 @@ def launch_powershell(admin: bool = False, use_wt: bool = True) -> None:
     folder = os.path.normpath(get_explorer_target_folder())
     if use_wt and shutil.which("wt.exe"):
         if admin:
-            shell32.ShellExecuteW(None, "runas", "wt.exe", f'-d "{folder}"', folder, 1)
+            # list2cmdline keeps a drive root such as C:\ from swallowing the closing quote.
+            shell32.ShellExecuteW(None, "runas", "wt.exe", subprocess.list2cmdline(["-d", folder]), folder, 1)
         else:
             subprocess.Popen(["wt.exe", "-d", folder], cwd=folder, creationflags=0x00000008)
     else:
-        ps_cmd = f'Set-Location -LiteralPath \'{folder}\''
+        quoted = folder
+        # PowerShell treats typographic apostrophes as quotes too; doubling escapes each one.
+        for mark in "'\u2018\u2019\u201a\u201b":
+            quoted = quoted.replace(mark, mark * 2)
+        ps_cmd = f'Set-Location -LiteralPath \'{quoted}\''
         shell32.ShellExecuteW(None, "runas" if admin else "open", "powershell.exe", f'-NoExit -Command "{ps_cmd}"', folder, 1)
+
+
+def is_window_cloaked(hwnd: int) -> bool:
+    """True for windows DWM hides, such as windows on another virtual desktop."""
+    cloaked = wintypes.DWORD(0)
+    dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+    return cloaked.value != 0
 
 
 class WindowTopProManager:
@@ -1212,6 +1193,9 @@ class WindowTopProManager:
                 user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style & ~WS_EX_LAYERED)
             user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0080)
 
+    def _ghost_alpha(self) -> int:
+        return int(max(0.05, min(0.95, float(self.get_cfg().get("ghost_opacity", 0.45)))) * 255)
+
     def toggle_ghost_mode(self) -> None:
         hwnd = self._get_target_hwnd()
         if self.ghost_hwnds:
@@ -1228,7 +1212,7 @@ class WindowTopProManager:
 
         if not hwnd:
             return
-        ghost_alpha = int(max(0.05, min(0.95, float(self.get_cfg().get("ghost_opacity", 0.45)))) * 255)
+        ghost_alpha = self._ghost_alpha()
         self.ghost_hwnds.add(hwnd)
         st = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, st | WS_EX_LAYERED | WS_EX_TRANSPARENT)
@@ -1236,13 +1220,18 @@ class WindowTopProManager:
         user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
     def sync_live_properties(self) -> None:
-        cfg = self.get_cfg()
-        ghost_alpha = int(max(0.05, min(0.95, float(cfg.get("ghost_opacity", 0.45)))) * 255)
+        ghost_alpha = self._ghost_alpha()
         for h in list(self.ghost_hwnds):
             if user32.IsWindow(h):
                 user32.SetLayeredWindowAttributes(h, 0, ghost_alpha, LWA_ALPHA)
             else:
                 self.ghost_hwnds.discard(h)
+
+    def hide_borders(self) -> None:
+        """Withdraw pin borders; sync_borders draws them again once the module is back on."""
+        self._border_cache.clear()
+        for overlay in self.pinned_hwnds.values():
+            overlay.withdraw()
 
     def restore_all_windows(self) -> None:
         for h in list(self.ghost_hwnds):
@@ -1293,9 +1282,7 @@ class WindowTopProManager:
             if not user32.IsWindow(hwnd):
                 stale.append(hwnd)
                 continue
-            is_cloaked = wintypes.DWORD(0)
-            dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ctypes.byref(is_cloaked), ctypes.sizeof(is_cloaked))
-            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd) or is_cloaked.value != 0 or is_dragging_other:
+            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd) or is_window_cloaked(hwnd) or is_dragging_other:
                 if self._border_cache.get(hwnd, (None,))[0] != "hidden":
                     self._border_cache[hwnd] = ("hidden", 0)
                     overlay.withdraw()
@@ -1332,9 +1319,8 @@ class SnapGridManager:
         self.dragging_hwnd: Optional[int] = None
         self.resizing_hwnd: Optional[int] = None
         self.is_resize_session: bool = False
-        self.resize_start_rect: Optional[wintypes.RECT] = None
         self.resize_start_norm: Optional[List[float]] = None
-        self.seen_hwnds: set[int] = set()
+        self._docked_neighbors: Dict[int, bool] = {}
         self.seen_ever: set[int] = set()
         self._restore_scan_initialized = False
         self.active_hwnd_bounds: Dict[int, List[float]] = {}
@@ -1535,6 +1521,29 @@ class SnapGridManager:
         elif banner:
             canvas.create_text(w // 2, 34, text=banner, fill="#38bdf8", font=("Segoe UI", 14, "bold"))
 
+    def _still_docked(self, hwnd: int, work: wintypes.RECT, norm: List[float], moving: Tuple[int, ...] = ()) -> bool:
+        """True while the window still sits in its remembered zone.
+
+        The memory goes stale when a window is moved without snapping (Win+arrows,
+        overlay off, Shift not held). Left and top must match; right and bottom may
+        reach further (apps with a minimum size). `moving` lists the edges being
+        dragged right now (0=left, 1=top, 2=right, 3=bottom); those are skipped.
+        """
+        rect = WindowTopProManager.get_real_window_rect(hwnd)
+        mw, mh = max(1, work.right - work.left), max(1, work.bottom - work.top)
+        half_gap = int(self.get_cfg().get("snap_zone_spacing", 8)) // 2
+        actual = (
+            (rect.left - half_gap - work.left) / mw,
+            (rect.top - half_gap - work.top) / mh,
+            (rect.right + half_gap - work.left) / mw,
+            (rect.bottom + half_gap - work.top) / mh,
+        )
+        for edge in range(4):
+            drift = actual[edge] - norm[edge]
+            if edge not in moving and (drift < -0.05 or (edge < 2 and drift > 0.05)):
+                return False
+        return True
+
     def _sync_coupled_neighbors(self, active_hwnd: int) -> None:
         if not self.resize_start_norm:
             return
@@ -1543,10 +1552,7 @@ class SnapGridManager:
         spacing = int(self.get_cfg().get("snap_zone_spacing", 8))
         half_gap = spacing // 2
 
-        wr, dr = wintypes.RECT(), wintypes.RECT()
-        user32.GetWindowRect(active_hwnd, ctypes.byref(wr))
-        if dwmapi.DwmGetWindowAttribute(active_hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(dr), ctypes.sizeof(dr)) != 0:
-            dr = wr
+        dr = WindowTopProManager.get_real_window_rect(active_hwnd)
 
         new_norm = [
             round(max(0.0, min(1.0, (dr.left - half_gap - work.left) / mw)), 4),
@@ -1561,8 +1567,24 @@ class SnapGridManager:
         for h_other, b_other in list(self.active_hwnd_bounds.items()):
             if h_other == active_hwnd or not user32.IsWindow(h_other) or not user32.IsWindowVisible(h_other):
                 continue
+            if user32.IsIconic(h_other) or user32.IsZoomed(h_other):
+                continue
+            # Windows on other virtual desktops still report "visible", but are cloaked.
+            if is_window_cloaked(h_other):
+                continue
+            wr_o = wintypes.RECT()
+            user32.GetWindowRect(h_other, ctypes.byref(wr_o))
+            cx_o = (wr_o.left + wr_o.right) // 2
+            cy_o = (wr_o.top + wr_o.bottom) // 2
+            if not (work.left <= cx_o < work.right and work.top <= cy_o < work.bottom):
+                continue
             o_mon, _ = self.get_monitor_context_for_window(h_other)
             if o_mon != mon_id:
+                continue
+            # Judged once per drag, before anything moves: a neighbour with size limits keeps following.
+            if h_other not in self._docked_neighbors:
+                self._docked_neighbors[h_other] = self._still_docked(h_other, work, b_other)
+            if not self._docked_neighbors[h_other]:
                 continue
             updated = list(b_other)
             changed = False
@@ -1582,6 +1604,7 @@ class SnapGridManager:
         cfg = self.get_cfg()
         now_ms = int(kernel32.GetTickCount64())
         if not cfg.get("modules", {}).get("snap_grid", True):
+            self._restore_scan_initialized = False
             self._hide_overlay()
             return
 
@@ -1600,12 +1623,15 @@ class SnapGridManager:
                     lparam_pt = (pt_hit.y << 16) | (pt_hit.x & 0xFFFF)
                     ht = user32.SendMessageW(gti.hwndMoveSize, WM_NCHITTEST, 0, lparam_pt)
                     self.is_resize_session = (10 <= ht <= 17)
-                    cur_r = wintypes.RECT()
-                    user32.GetWindowRect(gti.hwndMoveSize, ctypes.byref(cur_r))
-                    self.resize_start_rect = cur_r
+                    self._docked_neighbors.clear()
                     if self.is_resize_session and gti.hwndMoveSize in self.active_hwnd_bounds:
-                        self.resizing_hwnd = gti.hwndMoveSize
-                        self.resize_start_norm = list(self.active_hwnd_bounds[gti.hwndMoveSize])
+                        norm = self.active_hwnd_bounds[gti.hwndMoveSize]
+                        _, work = self.get_monitor_context_for_window(gti.hwndMoveSize)
+                        # Hit-test codes that move each edge: left, top, right, bottom.
+                        moving = tuple(i for i, codes in enumerate(((10, 13, 16), (12, 13, 14), (11, 14, 17), (15, 16, 17))) if ht in codes)
+                        if self._still_docked(gti.hwndMoveSize, work, norm, moving):
+                            self.resizing_hwnd = gti.hwndMoveSize
+                            self.resize_start_norm = list(norm)
 
         if in_movesize and self.is_resize_session:
             self._flash_until_ms = 0
@@ -1630,8 +1656,8 @@ class SnapGridManager:
                 self._hide_overlay()
         else:
             self.is_resize_session = False
-            self.resize_start_rect = None
             self.resize_start_norm = None
+            self._docked_neighbors.clear()
             if self.resizing_hwnd is not None:
                 self.resizing_hwnd = None
                 self.dragging_hwnd = None
@@ -1652,7 +1678,10 @@ class SnapGridManager:
                 self._flash_until_ms = 0
                 self._hide_overlay()
 
-        if cfg.get("snap_restore_last_zone", True) and (now_ms - self._last_restore_scan >= 15):
+        if not cfg.get("snap_restore_last_zone", True):
+            # Re-seed when switched on again, so windows opened meanwhile stay put.
+            self._restore_scan_initialized = False
+        elif now_ms - self._last_restore_scan >= 15:
             self._last_restore_scan = now_ms
             self._scan_and_restore_new_windows()
 
@@ -1697,18 +1726,18 @@ class SnapGridManager:
 
         if class_name in ("#32770", "OperationStatusWindow", "Shell_TrayWnd", "NotifyIconOverflowWindow"):
             return
-        if parent_info is not None and not is_dialog:
+        if parent_info is not None:
             return
-        if parent_info is None and not is_dialog:
-            child_pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(child_pid))
-            if child_pid.value:
-                for sibling_hwnd in tuple(self.active_hwnd_bounds):
-                    if sibling_hwnd != hwnd and user32.IsWindow(sibling_hwnd) and user32.IsWindowVisible(sibling_hwnd):
-                        sibling_pid = wintypes.DWORD()
-                        user32.GetWindowThreadProcessId(sibling_hwnd, ctypes.byref(sibling_pid))
-                        if sibling_pid.value == child_pid.value:
-                            return
+        # An ownerless popup of an app that already has a snapped window stays where the app put it.
+        child_pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(child_pid))
+        if child_pid.value:
+            for sibling_hwnd in tuple(self.active_hwnd_bounds):
+                if sibling_hwnd != hwnd and user32.IsWindow(sibling_hwnd) and user32.IsWindowVisible(sibling_hwnd):
+                    sibling_pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(sibling_hwnd, ctypes.byref(sibling_pid))
+                    if sibling_pid.value == child_pid.value:
+                        return
         exe = get_process_exe_name(hwnd)
         rec = (history.get(f"{exe}|D{current_desktop_number()}") or history.get(exe)) if exe else None
         if rec:
@@ -1717,26 +1746,13 @@ class SnapGridManager:
                 target_mon, work = self._get_work_area_for_mon_id(rec.get("mon_id", ""), hwnd)
                 self.apply_bounds_to_window(hwnd, target_mon, work, norm_rect, str(rec.get("slot", "3")), tuple(rec.get("indices", [0])), False)
 
-    def restore_single_hwnd_instant(self, hwnd: int) -> None:
-        if not hwnd or hwnd in self.seen_ever:
-            return
-        if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
-            return
-        ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        if (ex_style & WS_EX_TOOLWINDOW) or user32.GetWindowTextLengthW(hwnd) <= 0:
-            return
-        own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
-        if hwnd in (self.root.winfo_id(), own_root):
-            return
-        self.seen_hwnds.add(hwnd)
-        self.seen_ever.add(hwnd)
-        self._restore_window_delayed(hwnd)
-
     def _scan_and_restore_new_windows(self) -> None:
         visible_now: set[int] = set()
+        open_now: set[int] = set()
         enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
         def _enum_cb(hwnd: int, _: int) -> bool:
+            open_now.add(hwnd)
             if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
                 ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
                 if not (ex_style & WS_EX_TOOLWINDOW) and user32.GetWindowTextLengthW(hwnd) > 0:
@@ -1745,12 +1761,11 @@ class SnapGridManager:
 
         user32.EnumWindows(enum_proc(_enum_cb), 0)
         if not self._restore_scan_initialized:
-            self.seen_ever.update(visible_now)
-            self.seen_hwnds = set(self.seen_ever)
+            # Minimized and hidden windows already exist too: showing them later is not "new".
+            self.seen_ever.update(open_now)
             self._restore_scan_initialized = True
             return
-        brand_new_hwnds = scan_new_handles(visible_now, self.seen_ever, lambda h: bool(user32.IsWindow(h)))
-        self.seen_hwnds = set(self.seen_ever)
+        brand_new_hwnds = scan_new_handles(visible_now, self.seen_ever, lambda h: h in open_now or bool(user32.IsWindow(h)))
 
         own_root = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
         for hwnd in brand_new_hwnds:
@@ -1959,18 +1974,6 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-        elif self.path == "/api/rename_desktops":
-            vd_guids = _vd_guid_list()
-            for item in data:
-                if item.get("name") and 1 <= int(item.get("num", 0)) <= len(vd_guids):
-                    try:
-                        key_path = _VD_REG + r"\Desktops\{" + vd_guids[int(item["num"]) - 1] + "}"
-                        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as reg_key:
-                            winreg.SetValueEx(reg_key, "Name", 0, winreg.REG_SZ, str(item["name"]))
-                    except Exception:
-                        pass
-            if hasattr(self.server, "on_config_saved"):
-                self.server.on_config_saved()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -2010,11 +2013,9 @@ class LehaVortexSuite:
 
         self.config = load_config_data()
         self._config_str = json.dumps(self.config, sort_keys=True)
-        self._extract_queue: "queue.Queue[Any]" = queue.Queue()
         self._capture_suspend_until = 0.0
         self._screenshot_queue: "queue.Queue[Any]" = queue.Queue()
         self._region_select_open = False
-        threading.Thread(target=self._extract_worker, daemon=True, name="vortex-extract").start()
         threading.Thread(target=self._screenshot_worker, daemon=True, name="vortex-screenshot").start()
 
         self.wtop = WindowTopProManager(self.root, lambda: self.config)
@@ -2171,24 +2172,6 @@ class LehaVortexSuite:
             except Exception as exc:
                 _log_error("screenshot", exc)
 
-    def _extract_worker(self) -> None:
-        try:
-            import comtypes
-            comtypes.CoInitialize()
-        except Exception:
-            pass
-        while self.running:
-            try:
-                job = self._extract_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            try:
-                if job == "extract":
-                    self._extract_archives(get_explorer_selection())
-            except Exception as exc:
-                _log_error("extract", exc)
-
-
     def _check_shot_size(self, image: Any, expected: Tuple[int, int]) -> None:
         """Log a size mismatch between the grabbed image and the requested box.
 
@@ -2207,32 +2190,26 @@ class LehaVortexSuite:
     def _capture_screenshot(self, bbox: Optional[Tuple[int, int, int, int]] = None) -> None:
         if bbox is not None:
             rect = normalize_shot_rect(*bbox)
-            image = ImageGrab.grab(bbox=rect)
+            image = ImageGrab.grab(bbox=rect, all_screens=True)
             self._check_shot_size(image, (rect[2] - rect[0], rect[3] - rect[1]))
             self._save_screenshot(image)
             return
+        bounds = None
         try:
             pt = POINT()
-            if not user32.GetCursorPos(ctypes.byref(pt)):
-                raise OSError("GetCursorPos failed")
-            hmon = user32.MonitorFromPoint(POINT(pt.x, pt.y), 2)
-            mi = MONITORINFO()
-            mi.cbSize = ctypes.sizeof(MONITORINFO)
-            if not hmon or not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
-                raise OSError("GetMonitorInfoW failed")
-            bounds = (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom)
+            if user32.GetCursorPos(ctypes.byref(pt)):
+                bounds = monitor_bounds(pt.x, pt.y)
         except Exception:
+            pass
+        if bounds is None:
             try:
-                primary = user32.MonitorFromPoint(POINT(0, 0), 1)
-                mi = MONITORINFO()
-                mi.cbSize = ctypes.sizeof(MONITORINFO)
-                if not primary or not user32.GetMonitorInfoW(primary, ctypes.byref(mi)):
-                    raise OSError("Primary monitor lookup failed")
-                bounds = (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom)
+                bounds = monitor_bounds(0, 0, 1)  # primary monitor
             except Exception:
-                bounds = (0, 0, max(1, user32.GetSystemMetrics(0)), max(1, user32.GetSystemMetrics(1)))
+                pass
+        if bounds is None:
+            bounds = (0, 0, max(1, user32.GetSystemMetrics(0)), max(1, user32.GetSystemMetrics(1)))
 
-        image = ImageGrab.grab(bbox=bounds)
+        image = ImageGrab.grab(bbox=bounds, all_screens=True)
         self._check_shot_size(image, (bounds[2] - bounds[0], bounds[3] - bounds[1]))
         self._save_screenshot(image)
 
@@ -2308,14 +2285,11 @@ class LehaVortexSuite:
             pt = POINT()
             if not user32.GetCursorPos(ctypes.byref(pt)):
                 return
-            hmon = user32.MonitorFromPoint(POINT(pt.x, pt.y), 2)
-            mi = MONITORINFO()
-            mi.cbSize = ctypes.sizeof(MONITORINFO)
-            if not hmon or not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
-                return
-            bounds = (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom)
+            bounds = monitor_bounds(pt.x, pt.y)
         except Exception as exc:
             _log_error("screenshot-region", exc)
+            return
+        if bounds is None:
             return
         self._region_select_open = True
         try:
@@ -2384,7 +2358,6 @@ class LehaVortexSuite:
             canvas.bind("<ButtonRelease-1>", on_release)
             overlay.bind("<Escape>", cancel)
             overlay.bind("<Button-3>", cancel)
-            self._region_overlay = overlay
         except Exception as exc:
             self._region_select_open = False
             _log_error("screenshot-region", exc)
@@ -2404,55 +2377,14 @@ class LehaVortexSuite:
         except Exception as exc:
             _log_error("screenshot-toast", exc)
 
-    def _extract_archives(self, paths: List[str]) -> None:
-        done: List[str] = []
-        for path in paths:
-            try:
-                ext = os.path.splitext(path)[1].lower()
-                if ext not in ARCHIVE_EXTS:
-                    continue
-                dest = extract_dest_for(path)
-                if ext == ".zip":
-                    with zipfile.ZipFile(path) as zf:
-                        zf.extractall(dest)
-                else:
-                    winrar = find_winrar()
-                    if not winrar:
-                        continue
-                    result = subprocess.run([winrar, "x", "-o+", path, dest + "\\"], creationflags=0x08000000, check=False)
-                    if result.returncode != 0:
-                        raise OSError(f"WinRAR exited with code {result.returncode}")
-                done.append(os.path.basename(dest))
-            except Exception as exc:
-                _log_error("extract", exc)
-        if done:
-            self._post_ui(lambda names=done: self._show_extract_toast(names))
-
-    def _show_extract_toast(self, names: List[str]) -> None:
-        try:
-            text = ", ".join(names[:2])
-            if len(names) > 2:
-                text += f" +{len(names) - 2}"
-            toast = tk.Toplevel(self.root)
-            toast.overrideredirect(True)
-            toast.attributes("-topmost", True)
-            toast.configure(bg="#18181b")
-            tk.Label(toast, text=text, bg="#18181b", fg="#f4f4f5", padx=14, pady=9, font=("Segoe UI", 9)).pack()
-            toast.update_idletasks()
-            x = max(0, toast.winfo_screenwidth() - toast.winfo_reqwidth() - 24)
-            y = max(0, toast.winfo_screenheight() - toast.winfo_reqheight() - 48)
-            toast.geometry(f"+{x}+{y}")
-            toast.after(1000, toast.destroy)
-        except Exception as exc:
-            _log_error("extract-toast", exc)
-
-
     def reload_config_immediately(self) -> None:
         def _apply() -> None:
             self.config = load_config_data()
             self._config_str = json.dumps(self.config, sort_keys=True)
             TEXT_BBOX_CACHE.clear()
             self.wtop.sync_live_properties()
+            if not self.config.get("modules", {}).get("always_on_top", True):
+                self.wtop.hide_borders()
             if not self.config.get("modules", {}).get("desktop_bar", True):
                 self.appbar.hide()
             else:
@@ -2511,12 +2443,6 @@ class LehaVortexSuite:
                                 self._screenshot_queue.put_nowait(shot_mode)
                                 return 1
 
-                    if not win and mods.get("extract", True):
-                        if hotkey_matches(normalized_extract_hotkey(self.config), vk, ctrl, alt, shift):
-                            self._extract_queue.put_nowait("extract")
-                            return 1
-
-
                     if ctrl and alt and not shift and not win:
                         if vk == 0x48:
                             self._post_ui(self.toggle_visibility)
@@ -2543,11 +2469,8 @@ class LehaVortexSuite:
                                 return 1
 
                     if not ctrl and not alt and not shift and not win:
-                        if vk == 0x78 and mods.get("quick_shell", True):
-                            threading.Thread(target=launch_powershell, args=(False, self.config.get("shell_use_wt", True)), daemon=True).start()
-                            return 1
-                        if vk == 0x79 and mods.get("quick_shell", True):
-                            threading.Thread(target=launch_powershell, args=(True, self.config.get("shell_use_wt", True)), daemon=True).start()
+                        if vk in (0x78, 0x79) and mods.get("quick_shell", True):  # F9 user, F10 admin
+                            threading.Thread(target=launch_powershell, args=(vk == 0x79, self.config.get("shell_use_wt", True)), daemon=True).start()
                             return 1
 
             except Exception as exc:
@@ -2727,11 +2650,13 @@ class LehaVortexSuite:
         layout_mode = cfg.get("layout_mode", "center")
         est_x = max(pad_x, (mon_width // 2) - (total_base_w // 2)) if layout_mode == "center" else pad_x
         still_animating = False
+        equal_pw = max(int(40 * scale), (avail_width - pill_gap * (len(pills_meta) - 1)) // len(pills_meta)) if (layout_mode == "stretch" and pills_meta) else 0
 
         for pm in pills_meta:
             d_num = pm["num"]
-            est_cx = est_x + pm["base_pw"] / 2.0
-            est_x += pm["base_pw"] + pill_gap
+            est_w = equal_pw or pm["base_pw"]
+            est_cx = est_x + est_w / 2.0
+            est_x += est_w + pill_gap
             target_zoom = 1.0
             if cfg.get("hover_zoom", False) and self.hover_x is not None:
                 dist = abs(self.hover_x - est_cx)
@@ -2745,7 +2670,6 @@ class LehaVortexSuite:
             else:
                 still_animating = True
             self.hover_scales[d_num] = new_zoom
-            pm["zoom"] = new_zoom
 
             z_font_size = max(8, int(round(base_font_size * (1.0 + (new_zoom - 1.0) * 0.65))))
             f_use, fk_use = self.resolve_font(z_font_size, pm["active"])
@@ -2756,7 +2680,6 @@ class LehaVortexSuite:
 
         self.is_animating = still_animating
         total_pills_width = sum(p["pw"] for p in pills_meta) + (pill_gap * max(0, len(pills_meta) - 1))
-        equal_pw = max(int(40 * scale), (avail_width - pill_gap * (len(pills_meta) - 1)) // len(pills_meta)) if (layout_mode == "stretch" and pills_meta) else 0
         cur_x = pad_x if layout_mode != "center" else max(pad_x, (mon_width // 2) - (total_pills_width // 2))
 
         try:
@@ -2907,44 +2830,6 @@ class LehaVortexSuite:
             pass
         self.appbar.hide()
         self.root.after(80, self.root.destroy)
-
-    def show_bar_context_menu(self, x_root: int, y_root: int) -> None:
-        if hasattr(self, "_ctx_win") and self._ctx_win and self._ctx_win.winfo_exists():
-            self._ctx_win.destroy()
-        popup = tk.Toplevel(self.root)
-        self._ctx_win = popup
-        popup.overrideredirect(True)
-        popup.attributes("-topmost", True)
-        popup.configure(bg="#2a2a35", padx=1, pady=1)
-        box = tk.Frame(popup, bg="#18181b")
-        box.pack(fill="both", expand=True)
-
-        def _close(_: Any = None) -> None:
-            if popup.winfo_exists():
-                popup.destroy()
-
-        def _add_item(label: str, cmd: Callable[[], None], danger: bool = False) -> None:
-            btn = tk.Label(box, text=label, bg="#18181b", fg="#f87171" if danger else "#f4f4f5", font=("Segoe UI", 9), anchor="w", padx=12, pady=6, cursor="hand2")
-            btn.pack(fill="x")
-            btn.bind("<Enter>", lambda _: btn.configure(bg="#27272f"))
-            btn.bind("<Leave>", lambda _: btn.configure(bg="#18181b"))
-            btn.bind("<Button-1>", lambda _: (_close(), cmd()))
-
-        _add_item("Open LEHA Vortex Studio (Ctrl+Alt+V)", self.open_settings_popup)
-        _add_item("Hide Bar (Ctrl+Alt+H)", self.toggle_visibility)
-        tk.Frame(box, bg="#2a2a35", height=1).pack(fill="x", pady=2)
-        _add_item("Exit LEHA Vortex Suite", self.quit_app, danger=True)
-
-        popup.update_idletasks()
-        sw = user32.GetSystemMetrics(0)
-        pw, ph = popup.winfo_reqwidth(), popup.winfo_reqheight()
-        hwnd_p = user32.GetParent(popup.winfo_id()) or popup.winfo_id()
-        user32.SetWindowPos(hwnd_p, HWND_TOPMOST, min(x_root, sw - pw - 8), y_root + 4, pw, ph, SWP_SHOWWINDOW)
-        user32.SetForegroundWindow(hwnd_p)
-        popup.focus_force()
-        popup.bind("<FocusOut>", _close)
-        popup.bind("<Escape>", _close)
-        popup.after(3000, _close)
 
     def run(self) -> None:
         try:
